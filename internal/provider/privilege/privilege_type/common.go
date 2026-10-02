@@ -147,6 +147,13 @@ func (f *BasePrivilegeType) DoDeleteRequest(privilegeName string, apiClient *son
 	return apiClient.SecurityManagementPrivilegesAPI.DeletePrivilege(ctx, privilegeName).Execute()
 }
 
+// DoImportRequest provides a base implementation for privilege import
+func (f *BasePrivilegeType) DoImportRequest(privilegeName string, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+	// For base implementation, we can't determine the specific privilege type
+	// This should be overridden by each format implementation
+	return nil, nil, fmt.Errorf("import not implemented for this Privilege Type")
+}
+
 func (f *BasePrivilegeType) ApiCreateSuccessResponseCodes() []int {
 	return []int{http.StatusCreated}
 }
@@ -166,6 +173,7 @@ type PrivilegeType interface {
 	DoUpdateRequest(plan any, state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error)
 	DoDeleteRequest(repositoryName string, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error)
 	DoReadRequest(state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error)
+	DoImportRequest(privilegeName string, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error)
 	IsDeprecated() bool
 	ApiCreateSuccessResponseCodes() []int
 	PrivilegeTypeSchemaAttributes() map[string]tfschema.Attribute
@@ -183,7 +191,7 @@ func schemaAttributesActionFormatRepository() map[string]tfschema.Attribute {
 			"A set of actions to associate with the privilege, using BREAD syntax (browse,read,edit,add,delete,all) as well as 'run' for script privileges.",
 			setvalidator.All(
 				setvalidator.ValueStringsAre(
-					stringvalidator.OneOf(BreadActions()...),
+					stringvalidator.OneOf(AllActionsExceptRun()...),
 				),
 			),
 		),

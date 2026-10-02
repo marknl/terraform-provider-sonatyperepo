@@ -19,6 +19,7 @@ package format
 import (
 	"regexp"
 	"terraform-provider-sonatyperepo/internal/provider/common"
+	"terraform-provider-sonatyperepo/internal/provider/model"
 	"terraform-provider-sonatyperepo/internal/provider/validators"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
@@ -34,7 +35,129 @@ import (
 	"github.com/sonatype-nexus-community/terraform-provider-shared/schema"
 )
 
-func commonProxySchemaAttributes(supportsRepositoryFirewall, supportsPccs bool) map[string]tfschema.Attribute {
+// FirewallModeFromFlags derives the inline `firewall.mode` value (NXRM 3.94+) from the
+// Terraform schema flags stored in `repository_firewall`.
+func FirewallModeFromFlags(hasConfig, enabled, quarantine, pccsEnabled bool) common.FirewallMode {
+	if !hasConfig || !enabled {
+		return common.FirewallModeDisabled
+	}
+	if pccsEnabled {
+		return common.FirewallModePccs
+	}
+	if quarantine {
+		return common.FirewallModeQuarantine
+	}
+	return common.FirewallModeAudit
+}
+
+// FirewallFlagsFromMode derives the `repository_firewall` schema flags from the inline
+// `firewall.mode` value (NXRM 3.94+).
+func FirewallFlagsFromMode(mode common.FirewallMode) (enabled, quarantine, pccsEnabled bool) {
+	switch mode {
+	case common.FirewallModeAudit:
+		return true, false, false
+	case common.FirewallModeQuarantine:
+		return true, true, false
+	case common.FirewallModePccs:
+		return true, false, true
+	default:
+		return false, false, false
+	}
+}
+
+// ComputeFirewallMode derives the inline `firewall.mode` value (NXRM 3.94+) for a proxy
+// repository's plan/state model. It only asks for quarantine/pccs flags when a
+// `repository_firewall` block is actually present, since some formats' getters for those
+// flags assume a non-nil block.
+func ComputeFirewallMode(f RepositoryFormat, state any) common.FirewallMode {
+	hasConfig := f.HasFirewallConfig(state)
+	enabled := f.GetRepositoryFirewallEnabled(state)
+	var quarantine, pccsEnabled bool
+	if hasConfig {
+		quarantine = f.GetRepositoryFirewallQuarantineEnabled(state)
+		pccsEnabled = f.GetRepositoryFirewallPccsEnabled(state)
+	}
+	return FirewallModeFromFlags(hasConfig, enabled, quarantine, pccsEnabled)
+}
+
+// ResolveFirewallBlockFlags reconciles the `repository_firewall` state attribute against the
+// inline `firewall.mode` (NXRM 3.94+) reported by DoReadRequest/DoImportRequest, given
+// whether the incoming state/plan model already had a `repository_firewall` block
+// configured.
+//
+// `repository_firewall` is Optional but not Computed, with no plan modifier (see
+// commonProxyFirewallAuditQuarantineAttribute), so Terraform always builds its planned value
+// directly from the practitioner's config. If the block was configured - even with
+// `enabled = false` - the plan is a non-null object; unconditionally nulling the whole
+// attribute out just because the server resolves the mode as disabled then makes apply fail
+// with "Provider produced inconsistent result after apply" (see GH-469). A resolved Disabled
+// mode should only clear the block when it was never configured to begin with - otherwise
+// it's just another set of flags to report, the same as Audit/Quarantine/Pccs.
+func ResolveFirewallBlockFlags(hadConfig bool, mode common.FirewallMode) (keep, enabled, quarantine, pccsEnabled bool) {
+	enabled, quarantine, pccsEnabled = FirewallFlagsFromMode(mode)
+	keep = hadConfig || mode != common.FirewallModeDisabled
+	return keep, enabled, quarantine, pccsEnabled
+}
+
+// ReconcileFirewallBlockWithPlan makes `repository_firewall` in state match whether the NEW
+// plan configured it, overriding whatever ResolveFirewallBlockFlags decided inside
+// UpdateStateFromApi using the PRIOR state - the only signal available to it in the Update()
+// path (see repository_common.go, which feeds UpdateStateFromApi the prior state rather than
+// the new plan). This must be reconciled in both directions:
+//
+//   - The plan has no block, but state still carries one over from before the apply: force
+//     nil. Without this, disabling the firewall by removing the `repository_firewall` block
+//     entirely (rather than setting `enabled = false`) leaves a stale non-null block in state
+//     after an Update() that turns it off, because ResolveFirewallBlockFlags saw the prior
+//     state's now-stale block and concluded it was still configured. Terraform's plan (built
+//     from the new, block-less config) is null, so the stale non-null state fails the same
+//     "Provider produced inconsistent result after apply" check GH-469 was about - just from
+//     the opposite direction.
+//   - The plan has a block, but state is nil: backfill from the plan. This is the
+//     first-time-add-with-`enabled = false"` transition GH-469 was actually filed for -
+//     UpdateStateFromApi can't see it because Update() only hands it the prior (block-less)
+//     state, not the new plan.
+//
+// When state already has a non-nil block that the plan also wants, its values - resolved from
+// the live server mode via FirewallFlagsFromMode, not copied from the plan - are left
+// untouched: they're more trustworthy for flag combinations the server itself resolves
+// differently than configured (e.g. `quarantine = true` together with `pccs_enabled = true`,
+// which NXRM silently resolves to PCCS mode with quarantine reported back as false).
+func ReconcileFirewallBlockWithPlan(stateFirewall, planFirewall *model.FirewallAuditAndQuarantineModel) *model.FirewallAuditAndQuarantineModel {
+	if planFirewall == nil {
+		return nil
+	}
+	if stateFirewall != nil {
+		return stateFirewall
+	}
+	backfilled := *planFirewall
+	backfilled.CapabilityId = types.StringNull()
+	return &backfilled
+}
+
+// ReconcileFirewallBlockWithPccsPlan is ReconcileFirewallBlockWithPlan for the PCCS-capable
+// variant of the `repository_firewall` block (NPM, PyPI). See GH-469.
+func ReconcileFirewallBlockWithPccsPlan(stateFirewall, planFirewall *model.FirewallAuditAndQuarantineWithPccsModel) *model.FirewallAuditAndQuarantineWithPccsModel {
+	if planFirewall == nil {
+		return nil
+	}
+	if stateFirewall != nil {
+		return stateFirewall
+	}
+	backfilled := *planFirewall
+	backfilled.CapabilityId = types.StringNull()
+	return &backfilled
+}
+
+// ProxyApiResponseWithFirewall carries a proxy repository API response together with its
+// inline `firewall.mode` value (NXRM 3.94+), threading the mode through DoReadRequest/
+// DoImportRequest to UpdateStateFromApi without changing the RepositoryFormat interface.
+type ProxyApiResponseWithFirewall struct {
+	Repository   any
+	FirewallMode *common.FirewallMode
+}
+
+func commonProxySchemaAttributes(supportsRepositoryFirewall, supportsPccs, supportsPreemptiveAuthentication bool) map[string]tfschema.Attribute {
 	thisAttr := map[string]tfschema.Attribute{
 		"proxy": schema.ResourceRequiredSingleNestedAttribute(
 			"Proxy specific configuration for this Repository",
@@ -76,7 +199,7 @@ func commonProxySchemaAttributes(supportsRepositoryFirewall, supportsPccs bool) 
 				"blocked":        schema.ResourceRequiredBool("Whether to block outbound connections on the repository"),
 				"auto_block":     schema.ResourceRequiredBool("Whether to auto-block outbound connections if remote peer is detected as unreachable/unresponsive"),
 				"connection":     commonProxyConnectionAttribute(),
-				"authentication": commonProxyAuthenticationAttribute(),
+				"authentication": commonProxyAuthenticationAttribute(supportsPreemptiveAuthentication),
 			},
 		),
 		"routing_rule": schema.ResourceOptionalString("Routing Rule"),
@@ -182,7 +305,18 @@ func commonProxyConnectionAttribute() tfschema.SingleNestedAttribute {
 	return thisAttr
 }
 
-func commonProxyAuthenticationAttribute() tfschema.SingleNestedAttribute {
+func commonProxyAuthenticationAttribute(supportsPreemptiveAuthentication bool) tfschema.SingleNestedAttribute {
+	preemptiveAttr := schema.ResourceComputedOptionalBoolWithDefault(
+		"Whether to use pre-emptive authentication. Use with caution. Defaults to false.",
+		false,
+	)
+	if !supportsPreemptiveAuthentication {
+		// NXRM's API for this repository format has no `preemptive` field at all - it is
+		// silently ignored server-side no matter what value is sent. Only Maven, PyPI, and
+		// Terraform proxy formats actually support it. See GH-493.
+		preemptiveAttr.DeprecationMessage = "Sonatype Nexus Repository does not support pre-emptive authentication for this repository format. This attribute has no effect and may be removed in a future release."
+	}
+
 	return schema.ResourceOptionalSingleNestedAttribute(
 		"Authentication to upstream Repository",
 		map[string]tfschema.Attribute{
@@ -199,7 +333,7 @@ func commonProxyAuthenticationAttribute() tfschema.SingleNestedAttribute {
 			),
 			"ntlm_host":   schema.ResourceOptionalString("NTLM Host"),
 			"ntlm_domain": schema.ResourceOptionalString("NTLM Domain"),
-			"preemptive":  schema.ResourceOptionalBool("Whether to use pre-emptive authentication. Use with caution. Defaults to false."),
+			"preemptive":  preemptiveAttr,
 			"bearer_token": schema.ResourceSensitiveOptionalStringWithPlanModifier(
 				"Bearer Token used when Authentication Type == bearerToken",
 				stringplanmodifier.UseStateForUnknown(),

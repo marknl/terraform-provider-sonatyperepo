@@ -34,14 +34,15 @@ resource "sonatyperepo_repository_apt_proxy" "apt_proxy" {
   }
 
   http_client = {
-    blocked                   = false
-    auto_block                = false
-    connection                = "0"
-    enable_circular_redirects = true
-    enable_cookies            = true
-    retries                   = 0
-    timeout                   = 60
-    use_trust_store           = false
+    blocked    = false
+    auto_block = false
+    connection = {
+      enable_circular_redirects = true
+      enable_cookies            = true
+      retries                   = 0
+      timeout                   = 60
+      use_trust_store           = false
+    }
   }
 
   apt = {
@@ -108,7 +109,7 @@ Optional:
 - `ntlm_domain` (String) NTLM Domain
 - `ntlm_host` (String) NTLM Host
 - `password` (String, Sensitive) Password
-- `preemptive` (Boolean) Whether to use pre-emptive authentication. Use with caution. Defaults to false.
+- `preemptive` (Boolean, Deprecated) Whether to use pre-emptive authentication. Use with caution. Defaults to false.
 - `type` (String) Authentication type
 - `username` (String) Username
 

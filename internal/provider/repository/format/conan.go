@@ -67,24 +67,27 @@ func (f *ConanRepositoryFormat) ResourceName(repoType RepositoryType) string {
 // --------------------------------------------
 // Hosted Conan Format Functions
 // --------------------------------------------
-func (f *ConanRepositoryFormatHosted) DoCreateRequest(plan any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *ConanRepositoryFormatHosted) DoCreateRequest(plan any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositorConanHostedModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.CreateConanHostedRepository(ctx).Body(planModel.ToApiCreateModel()).Execute()
+	return apiClient.CreateConanHostedRepository(ctx, planModel.ToApiCreateModel())
 }
 
-func (f *ConanRepositoryFormatHosted) DoReadRequest(state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *ConanRepositoryFormatHosted) DoReadRequest(state any, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Cast to correct State Model Type
 	stateModel := (state).(model.RepositorConanHostedModel)
 
 	// Call to API to Read
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetConanHostedRepository(ctx, stateModel.Name.ValueString()).Execute()
+	apiResponse, httpResponse, err := apiClient.GetConanHostedRepository(ctx, stateModel.Name.ValueString())
+	if apiResponse == nil {
+		return nil, httpResponse, err
+	}
 	return *apiResponse, httpResponse, err
 }
 
-func (f *ConanRepositoryFormatHosted) DoUpdateRequest(plan any, state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *ConanRepositoryFormatHosted) DoUpdateRequest(plan any, state any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositorConanHostedModel)
 
@@ -92,12 +95,12 @@ func (f *ConanRepositoryFormatHosted) DoUpdateRequest(plan any, state any, apiCl
 	stateModel := (state).(model.RepositorConanHostedModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.UpdateConanHostedRepository(ctx, stateModel.Name.ValueString()).Body(planModel.ToApiUpdateModel()).Execute()
+	return apiClient.UpdateConanHostedRepository(ctx, stateModel.Name.ValueString(), planModel.ToApiUpdateModel())
 }
 
-func (f *ConanRepositoryFormatHosted) DoImportRequest(repositoryName string, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *ConanRepositoryFormatHosted) DoImportRequest(repositoryName string, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Call to API to Read repository for import
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetConanHostedRepository(ctx, repositoryName).Execute()
+	apiResponse, httpResponse, err := apiClient.GetConanHostedRepository(ctx, repositoryName)
 	if err != nil {
 		return nil, httpResponse, err
 	}
@@ -137,46 +140,55 @@ func (f *ConanRepositoryFormatHosted) UpdateStateFromApi(state any, api any) any
 // --------------------------------------------
 // PROXY Conan Format Functions
 // --------------------------------------------
-func (f *ConanRepositoryFormatProxy) DoCreateRequest(plan any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *ConanRepositoryFormatProxy) DoCreateRequest(plan any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryConanProxyModel)
 
+	// Compute inline firewall mode (NXRM 3.94+); ignored by pre-3.94 service implementations
+	firewallMode := ComputeFirewallMode(f, planModel)
+
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.CreateConanProxyRepository(ctx).Body(planModel.ToApiCreateModel()).Execute()
+	return apiClient.CreateConanProxyRepository(ctx, planModel.ToApiCreateModel(), &firewallMode)
 }
 
-func (f *ConanRepositoryFormatProxy) DoReadRequest(state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *ConanRepositoryFormatProxy) DoReadRequest(state any, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Cast to correct State Model Type
 	stateModel := (state).(model.RepositoryConanProxyModel)
 
 	// Call to API to Read
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetConanProxyRepository(ctx, stateModel.Name.ValueString()).Execute()
-	return *apiResponse, httpResponse, err
+	apiResponse, firewallMode, httpResponse, err := apiClient.GetConanProxyRepository(ctx, stateModel.Name.ValueString())
+	if apiResponse == nil {
+		return nil, httpResponse, err
+	}
+	return ProxyApiResponseWithFirewall{Repository: *apiResponse, FirewallMode: firewallMode}, httpResponse, err
 }
 
-func (f *ConanRepositoryFormatProxy) DoUpdateRequest(plan any, state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *ConanRepositoryFormatProxy) DoUpdateRequest(plan any, state any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryConanProxyModel)
 
 	// Cast to correct State Model Type
 	stateModel := (state).(model.RepositoryConanProxyModel)
 
+	// Compute inline firewall mode (NXRM 3.94+); ignored by pre-3.94 service implementations
+	firewallMode := ComputeFirewallMode(f, planModel)
+
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.UpdateConanProxyRepository(ctx, stateModel.Name.ValueString()).Body(planModel.ToApiUpdateModel()).Execute()
+	return apiClient.UpdateConanProxyRepository(ctx, stateModel.Name.ValueString(), planModel.ToApiUpdateModel(), &firewallMode)
 }
 
 // DoImportRequest implements the import functionality for Conan Proxy repositories
-func (f *ConanRepositoryFormatProxy) DoImportRequest(repositoryName string, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *ConanRepositoryFormatProxy) DoImportRequest(repositoryName string, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Call to API to Read repository for import
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetConanProxyRepository(ctx, repositoryName).Execute()
+	apiResponse, firewallMode, httpResponse, err := apiClient.GetConanProxyRepository(ctx, repositoryName)
 	if err != nil {
 		return nil, httpResponse, err
 	}
-	return *apiResponse, httpResponse, nil
+	return ProxyApiResponseWithFirewall{Repository: *apiResponse, FirewallMode: firewallMode}, httpResponse, nil
 }
 
 func (f *ConanRepositoryFormatProxy) FormatSchemaAttributes() map[string]tfschema.Attribute {
-	additionalAttributes := commonProxySchemaAttributes(f.SupportsRepositoryFirewall(), f.SupportsRepositoryFirewallPccs())
+	additionalAttributes := commonProxySchemaAttributes(f.SupportsRepositoryFirewall(), f.SupportsRepositoryFirewallPccs(), f.SupportsPreemptiveAuthentication())
 	maps.Copy(additionalAttributes, conanProxySchemaAttributes())
 	return additionalAttributes
 }
@@ -203,6 +215,27 @@ func (f *ConanRepositoryFormatProxy) UpdateStateFromApi(state any, api any) any 
 	if state != nil {
 		stateModel = (state).(model.RepositoryConanProxyModel)
 	}
+
+	// NXRM 3.94+ returns the repository wrapped with its inline firewall mode; use that
+	// directly instead of the Capability-based UpateStateWithCapability path.
+	if wrapped, ok := api.(ProxyApiResponseWithFirewall); ok {
+		stateModel.FromApiModel((wrapped.Repository).(sonatyperepo.ConanProxyApiRepository))
+		if wrapped.FirewallMode != nil {
+			keep, enabled, quarantine, _ := ResolveFirewallBlockFlags(stateModel.FirewallAuditAndQuarantine != nil, *wrapped.FirewallMode)
+			if !keep {
+				stateModel.FirewallAuditAndQuarantine = nil
+			} else {
+				if stateModel.FirewallAuditAndQuarantine == nil {
+					stateModel.FirewallAuditAndQuarantine = model.NewFirewallAuditAndQuarantineModelWithDefaults()
+				}
+				stateModel.FirewallAuditAndQuarantine.CapabilityId = types.StringNull()
+				stateModel.FirewallAuditAndQuarantine.Enabled = types.BoolValue(enabled)
+				stateModel.FirewallAuditAndQuarantine.Quarantine = types.BoolValue(quarantine)
+			}
+		}
+		return stateModel
+	}
+
 	stateModel.FromApiModel((api).(sonatyperepo.ConanProxyApiRepository))
 	return stateModel
 }
@@ -216,6 +249,7 @@ func (f *ConanRepositoryFormatProxy) UpdateStateFromPlanForNonApiFields(plan, st
 	}
 
 	stateModel.MapMissingApiFieldsFromPlan(planModel)
+	stateModel.FirewallAuditAndQuarantine = ReconcileFirewallBlockWithPlan(stateModel.FirewallAuditAndQuarantine, planModel.FirewallAuditAndQuarantine)
 	return stateModel
 }
 
@@ -276,24 +310,27 @@ func (f *ConanRepositoryFormatProxy) GetRepositoryFirewallQuarantineEnabled(stat
 // --------------------------------------------
 // GROUP Conan Format Functions
 // --------------------------------------------
-func (f *ConanRepositoryFormatGroup) DoCreateRequest(plan any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *ConanRepositoryFormatGroup) DoCreateRequest(plan any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryConanGroupModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.CreateConanGroupRepository(ctx).Body(planModel.ToApiCreateModel()).Execute()
+	return apiClient.CreateConanGroupRepository(ctx, planModel.ToApiCreateModel())
 }
 
-func (f *ConanRepositoryFormatGroup) DoReadRequest(state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *ConanRepositoryFormatGroup) DoReadRequest(state any, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Cast to correct State Model Type
 	stateModel := (state).(model.RepositoryConanGroupModel)
 
 	// Call to API to Read
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetConanGroupRepository(ctx, stateModel.Name.ValueString()).Execute()
+	apiResponse, httpResponse, err := apiClient.GetConanGroupRepository(ctx, stateModel.Name.ValueString())
+	if apiResponse == nil {
+		return nil, httpResponse, err
+	}
 	return *apiResponse, httpResponse, err
 }
 
-func (f *ConanRepositoryFormatGroup) DoUpdateRequest(plan any, state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *ConanRepositoryFormatGroup) DoUpdateRequest(plan any, state any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryConanGroupModel)
 
@@ -301,7 +338,7 @@ func (f *ConanRepositoryFormatGroup) DoUpdateRequest(plan any, state any, apiCli
 	stateModel := (state).(model.RepositoryConanGroupModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.UpdateConanGroupRepository(ctx, stateModel.Name.ValueString()).Body(planModel.ToApiUpdateModel()).Execute()
+	return apiClient.UpdateConanGroupRepository(ctx, stateModel.Name.ValueString(), planModel.ToApiUpdateModel())
 }
 
 func (f *ConanRepositoryFormatGroup) FormatSchemaAttributes() map[string]tfschema.Attribute {

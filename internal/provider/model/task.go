@@ -17,33 +17,29 @@
 package model
 
 import (
+	"terraform-provider-sonatyperepo/internal/provider/common"
+
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	v3 "github.com/sonatype-nexus-community/nexus-repo-api-client-go/v3"
 )
 
 // Task Frequency
 // ----------------------------------------
 type taskFrequency struct {
 	Schedule       types.String  `tfsdk:"schedule"`
-	StartDate      types.Int32   `tfsdk:"start_date"`
+	StartDate      types.Int64   `tfsdk:"start_date"`
 	TimezoneOffset types.String  `tfsdk:"timezone_offset"`
 	RecurringDays  []types.Int32 `tfsdk:"recurring_days"`
 	CronExpression types.String  `tfsdk:"cron_expression"`
 }
 
-func (f *taskFrequency) ToApiModel(api *v3.FrequencyXO) {
+func (f *taskFrequency) ToApiModel(api *common.TaskFrequencyApiModel) {
 	api.CronExpression = f.CronExpression.ValueStringPointer()
 	api.RecurringDays = make([]int32, 0)
 	for _, rd := range f.RecurringDays {
 		api.RecurringDays = append(api.RecurringDays, rd.ValueInt32())
 	}
 	api.Schedule = f.Schedule.ValueString()
-	if f.StartDate.ValueInt32Pointer() != nil {
-		val := int64(*f.StartDate.ValueInt32Pointer())
-		api.StartDate = &val
-	} else {
-		api.StartDate = nil
-	}
+	api.StartDate = f.StartDate.ValueInt64Pointer()
 	api.TimeZoneOffset = f.TimezoneOffset.ValueStringPointer()
 }
 
@@ -67,7 +63,7 @@ type TaskModelSimple struct {
 	Type types.String `tfsdk:"type"`
 }
 
-func (m *TaskModelSimple) MapFromApi(api *v3.TaskXO) {
+func (m *TaskModelSimple) MapFromApi(api *common.TaskApiModel) {
 	m.Id = types.StringPointerValue(api.Id)
 	m.Name = types.StringPointerValue(api.Name)
 	m.Type = types.StringPointerValue(api.Type)
@@ -84,29 +80,34 @@ type BaseTaskModel struct {
 	LastUpdated           types.String   `tfsdk:"last_updated"`
 }
 
-func (m *BaseTaskModel) MapFromApi(api *v3.TaskXO) {
+func (m *BaseTaskModel) MapFromApi(api *common.TaskApiModel) {
 	m.Id = types.StringPointerValue(api.Id)
-	m.Name = types.StringPointerValue(api.Name)
-	// m.Type = types.StringPointerValue(api.Type)
+	if api.Name != nil {
+		m.Name = types.StringPointerValue(api.Name)
+	}
 }
 
-func (m *BaseTaskModel) toApiCreateModel() *v3.TaskTemplateXO {
-	api := v3.NewTaskTemplateXOWithDefaults()
+func (m *BaseTaskModel) toApiCreateModel() *common.TaskCreateApiModel {
+	api := &common.TaskCreateApiModel{}
 	api.Name = m.Name.ValueString()
 	api.Enabled = m.Enabled.ValueBool()
-	api.Frequency = *v3.NewFrequencyXO(m.Frequency.Schedule.ValueString())
-	m.Frequency.ToApiModel(&api.Frequency)
+	if m.Frequency != nil {
+		api.Frequency = common.TaskFrequencyApiModel{Schedule: m.Frequency.Schedule.ValueString()}
+		m.Frequency.ToApiModel(&api.Frequency)
+	}
 	api.AlertEmail = m.AlertEmail.ValueStringPointer()
 	api.NotificationCondition = m.NotificationCondition.ValueString()
 	return api
 }
 
-func (m *BaseTaskModel) toApiUpdateModel() *v3.UpdateTaskRequest {
-	api := v3.NewUpdateTaskRequestWithDefaults()
+func (m *BaseTaskModel) toApiUpdateModel() *common.TaskUpdateApiModel {
+	api := &common.TaskUpdateApiModel{}
 	api.Name = m.Name.ValueString()
 	api.Enabled = m.Enabled.ValueBool()
-	api.Frequency = *v3.NewFrequencyXO(m.Frequency.Schedule.ValueString())
-	m.Frequency.ToApiModel(&api.Frequency)
+	if m.Frequency != nil {
+		api.Frequency = common.TaskFrequencyApiModel{Schedule: m.Frequency.Schedule.ValueString()}
+		m.Frequency.ToApiModel(&api.Frequency)
+	}
 	api.AlertEmail = m.AlertEmail.ValueStringPointer()
 	api.NotificationCondition = m.NotificationCondition.ValueString()
 	return api

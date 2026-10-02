@@ -36,6 +36,7 @@ const (
 	superSecretKeyFString = "super-secret-key-%s"
 	testingFString        = "TESTING 1 2 3 %s"
 	urlFString            = "https://%s.tld"
+	webhookUrlFString     = "https://example.com/%s"
 )
 
 func TestAccCapabilityAuditResource(t *testing.T) {
@@ -367,6 +368,17 @@ func TestAccCapabilityFirewallAuditQuarantineResource(t *testing.T) {
 				Minor: 83,
 				Patch: 99,
 			})
+			// Broken from NXRM 3.94.0 onwards - server returns a 500 when updating
+			// firewall configuration for a repository
+			testutil.SkipIfNxrmVersionInRange(t, &common.SystemVersion{
+				Major: 3,
+				Minor: 94,
+				Patch: 0,
+			}, &common.SystemVersion{
+				Major: 127,
+				Minor: 127,
+				Patch: 127,
+			})
 		},
 		Steps: []resource.TestStep{
 			// Create and Read testing
@@ -545,6 +557,26 @@ resource "%s" "cap" {
 					resource.TestCheckResourceAttr(resourceName, resourceAttrEnabled, "true"),
 					resource.TestCheckResourceAttr(resourceName, fmt.Sprintf(resourceAttrPropertiesFormat, resourceAttrAlwaysRemote), "true"),
 					resource.TestCheckResourceAttr(resourceName, fmt.Sprintf(resourceAttrPropertiesFormat, resourceAttrOverrideUrl), "https://some.url.tld"),
+				),
+			},
+			// Update testing
+			{
+				Config: fmt.Sprintf(utils_test.ProviderConfig+`
+resource "%s" "cap" {
+  notes = "example-notes-%s-updated"
+  enabled = true
+  properties = {
+    always_remote = true
+    override_url  = ""
+  }
+}
+`, resourceOutreachManagement, randomString),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttrSet(resourceName, resourceAttrId),
+					resource.TestCheckResourceAttr(resourceName, resourceAttrNotes, fmt.Sprintf(notesUpdatedFString, randomString)),
+					resource.TestCheckResourceAttr(resourceName, resourceAttrEnabled, "true"),
+					resource.TestCheckResourceAttr(resourceName, fmt.Sprintf(resourceAttrPropertiesFormat, resourceAttrAlwaysRemote), "true"),
+					resource.TestCheckResourceAttr(resourceName, fmt.Sprintf(resourceAttrPropertiesFormat, resourceAttrOverrideUrl), ""),
 				),
 			},
 			// Delete testing automatically occurs in TestCase
@@ -799,7 +831,7 @@ resource "%s" "cap" {
     names = [
       "repository"
     ]
-    url    = "https://%s.tld"
+    url    = "https://example.com/%s"
     secret = "super-secret-key-%s"
   }
 }
@@ -809,7 +841,7 @@ resource "%s" "cap" {
 					resource.TestCheckResourceAttr(resourceName, resourceAttrNotes, fmt.Sprintf(notesFString, randomString)),
 					resource.TestCheckResourceAttr(resourceName, resourceAttrEnabled, "true"),
 					resource.TestCheckTypeSetElemAttr(resourceName, fmt.Sprintf(resourceAttrPropertiesFormat, resourceAttrNames), "repository"),
-					resource.TestCheckResourceAttr(resourceName, propertiesUrl, fmt.Sprintf(urlFString, randomString)),
+					resource.TestCheckResourceAttr(resourceName, propertiesUrl, fmt.Sprintf(webhookUrlFString, randomString)),
 					resource.TestCheckResourceAttr(resourceName, fmt.Sprintf(resourceAttrPropertiesFormat, resourceAttrSecret), fmt.Sprintf(superSecretKeyFString, randomString)),
 				),
 			},
@@ -823,7 +855,7 @@ resource "%s" "cap" {
     names = [
       "repository"
     ]
-    url    = "https://%s.tld"
+    url    = "https://example.com/%s"
     secret = "super-secret-key-%s"
   }
 }
@@ -833,7 +865,7 @@ resource "%s" "cap" {
 					resource.TestCheckResourceAttr(resourceName, resourceAttrNotes, fmt.Sprintf(notesUpdatedFString, randomString)),
 					resource.TestCheckResourceAttr(resourceName, resourceAttrEnabled, "true"),
 					resource.TestCheckTypeSetElemAttr(resourceName, fmt.Sprintf(resourceAttrPropertiesFormat, resourceAttrNames), "repository"),
-					resource.TestCheckResourceAttr(resourceName, propertiesUrl, fmt.Sprintf(urlFString, randomString)),
+					resource.TestCheckResourceAttr(resourceName, propertiesUrl, fmt.Sprintf(webhookUrlFString, randomString)),
 					resource.TestCheckResourceAttr(resourceName, fmt.Sprintf(resourceAttrPropertiesFormat, resourceAttrSecret), fmt.Sprintf(superSecretKeyFString, randomString)),
 				),
 			},
@@ -871,7 +903,7 @@ resource "%s" "cap" {
     names = [
       "asset"
     ]
-    url    = "https://%s.tld"
+    url    = "https://example.com/%s"
     secret = "super-secret-key-%s"
 	repository = "maven-central"
   }
@@ -882,7 +914,7 @@ resource "%s" "cap" {
 					resource.TestCheckResourceAttr(resourceName, resourceAttrNotes, fmt.Sprintf(notesFString, randomString)),
 					resource.TestCheckResourceAttr(resourceName, resourceAttrEnabled, "true"),
 					resource.TestCheckTypeSetElemAttr(resourceName, fmt.Sprintf(resourceAttrPropertiesFormat, resourceAttrNames), "asset"),
-					resource.TestCheckResourceAttr(resourceName, propertiesUrl, fmt.Sprintf(urlFString, randomString)),
+					resource.TestCheckResourceAttr(resourceName, propertiesUrl, fmt.Sprintf(webhookUrlFString, randomString)),
 					resource.TestCheckResourceAttr(resourceName, fmt.Sprintf(resourceAttrPropertiesFormat, resourceAttrSecret), fmt.Sprintf(superSecretKeyFString, randomString)),
 					resource.TestCheckResourceAttr(resourceName, fmt.Sprintf(resourceAttrPropertiesFormat, resourceAttrRepository), "maven-central"),
 				),
@@ -897,7 +929,7 @@ resource "%s" "cap" {
     names = [
       "asset"
     ]
-    url    = "https://%s.tld"
+    url    = "https://example.com/%s"
     secret = "super-secret-key-%s"
 	repository = "maven-central"
   }
@@ -908,7 +940,7 @@ resource "%s" "cap" {
 					resource.TestCheckResourceAttr(resourceName, resourceAttrNotes, fmt.Sprintf(notesUpdatedFString, randomString)),
 					resource.TestCheckResourceAttr(resourceName, resourceAttrEnabled, "true"),
 					resource.TestCheckTypeSetElemAttr(resourceName, fmt.Sprintf(resourceAttrPropertiesFormat, resourceAttrNames), "asset"),
-					resource.TestCheckResourceAttr(resourceName, propertiesUrl, fmt.Sprintf(urlFString, randomString)),
+					resource.TestCheckResourceAttr(resourceName, propertiesUrl, fmt.Sprintf(webhookUrlFString, randomString)),
 					resource.TestCheckResourceAttr(resourceName, fmt.Sprintf(resourceAttrPropertiesFormat, resourceAttrSecret), fmt.Sprintf(superSecretKeyFString, randomString)),
 					resource.TestCheckResourceAttr(resourceName, fmt.Sprintf(resourceAttrPropertiesFormat, resourceAttrRepository), "maven-central"),
 				),

@@ -43,6 +43,10 @@ type HelmRepositoryFormatProxy struct {
 	HelmRepositoryFormat
 }
 
+type HelmRepositoryFormatGroup struct {
+	HelmRepositoryFormat
+}
+
 // --------------------------------------------
 // Generic Helm Format Functions
 // --------------------------------------------
@@ -57,24 +61,27 @@ func (f *HelmRepositoryFormat) ResourceName(repoType RepositoryType) string {
 // --------------------------------------------
 // Hosted Helm Format Functions
 // --------------------------------------------
-func (f *HelmRepositoryFormatHosted) DoCreateRequest(plan any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *HelmRepositoryFormatHosted) DoCreateRequest(plan any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryHelmHostedModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.CreateHelmHostedRepository(ctx).Body(planModel.ToApiCreateModel()).Execute()
+	return apiClient.CreateHelmHostedRepository(ctx, planModel.ToApiCreateModel())
 }
 
-func (f *HelmRepositoryFormatHosted) DoReadRequest(state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *HelmRepositoryFormatHosted) DoReadRequest(state any, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Cast to correct State Model Type
 	stateModel := (state).(model.RepositoryHelmHostedModel)
 
 	// Call to API to Read
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetHelmHostedRepository(ctx, stateModel.Name.ValueString()).Execute()
+	apiResponse, httpResponse, err := apiClient.GetHelmHostedRepository(ctx, stateModel.Name.ValueString())
+	if apiResponse == nil {
+		return nil, httpResponse, err
+	}
 	return *apiResponse, httpResponse, err
 }
 
-func (f *HelmRepositoryFormatHosted) DoUpdateRequest(plan any, state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *HelmRepositoryFormatHosted) DoUpdateRequest(plan any, state any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryHelmHostedModel)
 
@@ -82,7 +89,7 @@ func (f *HelmRepositoryFormatHosted) DoUpdateRequest(plan any, state any, apiCli
 	stateModel := (state).(model.RepositoryHelmHostedModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.UpdateHelmHostedRepository(ctx, stateModel.Name.ValueString()).Body(planModel.ToApiUpdateModel()).Execute()
+	return apiClient.UpdateHelmHostedRepository(ctx, stateModel.Name.ValueString(), planModel.ToApiUpdateModel())
 }
 
 func (f *HelmRepositoryFormatHosted) FormatSchemaAttributes() map[string]tfschema.Attribute {
@@ -116,9 +123,9 @@ func (f *HelmRepositoryFormatHosted) UpdateStateFromApi(state any, api any) any 
 }
 
 // DoImportRequest implements the import functionality for Helm Hosted repositories
-func (f *HelmRepositoryFormatHosted) DoImportRequest(repositoryName string, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *HelmRepositoryFormatHosted) DoImportRequest(repositoryName string, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Call to API to Read repository for import
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetHelmHostedRepository(ctx, repositoryName).Execute()
+	apiResponse, httpResponse, err := apiClient.GetHelmHostedRepository(ctx, repositoryName)
 	if err != nil {
 		return nil, httpResponse, err
 	}
@@ -128,24 +135,27 @@ func (f *HelmRepositoryFormatHosted) DoImportRequest(repositoryName string, apiC
 // --------------------------------------------
 // PROXY Helm Format Functions
 // --------------------------------------------
-func (f *HelmRepositoryFormatProxy) DoCreateRequest(plan any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *HelmRepositoryFormatProxy) DoCreateRequest(plan any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryHelmProxyModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.CreateHelmProxyRepository(ctx).Body(planModel.ToApiCreateModel()).Execute()
+	return apiClient.CreateHelmProxyRepository(ctx, planModel.ToApiCreateModel())
 }
 
-func (f *HelmRepositoryFormatProxy) DoReadRequest(state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *HelmRepositoryFormatProxy) DoReadRequest(state any, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Cast to correct State Model Type
 	stateModel := (state).(model.RepositoryHelmProxyModel)
 
 	// Call to API to Read
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetHelmProxyRepository(ctx, stateModel.Name.ValueString()).Execute()
+	apiResponse, httpResponse, err := apiClient.GetHelmProxyRepository(ctx, stateModel.Name.ValueString())
+	if apiResponse == nil {
+		return nil, httpResponse, err
+	}
 	return *apiResponse, httpResponse, err
 }
 
-func (f *HelmRepositoryFormatProxy) DoUpdateRequest(plan any, state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *HelmRepositoryFormatProxy) DoUpdateRequest(plan any, state any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryHelmProxyModel)
 
@@ -153,13 +163,13 @@ func (f *HelmRepositoryFormatProxy) DoUpdateRequest(plan any, state any, apiClie
 	stateModel := (state).(model.RepositoryHelmProxyModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.UpdateHelmProxyRepository(ctx, stateModel.Name.ValueString()).Body(planModel.ToApiUpdateModel()).Execute()
+	return apiClient.UpdateHelmProxyRepository(ctx, stateModel.Name.ValueString(), planModel.ToApiUpdateModel())
 }
 
 // DoImportRequest implements the import functionality for Helm Proxy repositories
-func (f *HelmRepositoryFormatProxy) DoImportRequest(repositoryName string, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *HelmRepositoryFormatProxy) DoImportRequest(repositoryName string, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Call to API to Read repository for import
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetHelmProxyRepository(ctx, repositoryName).Execute()
+	apiResponse, httpResponse, err := apiClient.GetHelmProxyRepository(ctx, repositoryName)
 	if err != nil {
 		return nil, httpResponse, err
 	}
@@ -167,7 +177,7 @@ func (f *HelmRepositoryFormatProxy) DoImportRequest(repositoryName string, apiCl
 }
 
 func (f *HelmRepositoryFormatProxy) FormatSchemaAttributes() map[string]tfschema.Attribute {
-	return commonProxySchemaAttributes(f.SupportsRepositoryFirewall(), f.SupportsRepositoryFirewallPccs())
+	return commonProxySchemaAttributes(f.SupportsRepositoryFirewall(), f.SupportsRepositoryFirewallPccs(), f.SupportsPreemptiveAuthentication())
 }
 
 func (f *HelmRepositoryFormatProxy) PlanAsModel(ctx context.Context, plan tfsdk.Plan) (any, diag.Diagnostics) {
@@ -211,4 +221,64 @@ func (f *HelmRepositoryFormatProxy) UpdateStateFromPlanForNonApiFields(plan, sta
 // Helm Proxy repos are not supported by Repository Firewall
 func (f *HelmRepositoryFormatProxy) SupportsRepositoryFirewall() bool {
 	return false
+}
+
+// --------------------------------------------
+// GROUP Helm Format Functions
+// --------------------------------------------
+func (f *HelmRepositoryFormatGroup) DoCreateRequest(plan any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
+	planModel := (plan).(model.RepositoryHelmGroupModel)
+	return apiClient.CreateHelmGroupRepository(ctx, planModel.ToApiCreateModel())
+}
+
+func (f *HelmRepositoryFormatGroup) DoReadRequest(state any, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
+	stateModel := (state).(model.RepositoryHelmGroupModel)
+	apiResponse, httpResponse, err := apiClient.GetHelmGroupRepository(ctx, stateModel.Name.ValueString())
+	if apiResponse == nil {
+		return nil, httpResponse, err
+	}
+	return *apiResponse, httpResponse, err
+}
+
+func (f *HelmRepositoryFormatGroup) DoUpdateRequest(plan any, state any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
+	planModel := (plan).(model.RepositoryHelmGroupModel)
+	stateModel := (state).(model.RepositoryHelmGroupModel)
+	return apiClient.UpdateHelmGroupRepository(ctx, stateModel.Name.ValueString(), planModel.ToApiUpdateModel())
+}
+
+func (f *HelmRepositoryFormatGroup) DoImportRequest(repositoryName string, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
+	apiResponse, httpResponse, err := apiClient.GetHelmGroupRepository(ctx, repositoryName)
+	if err != nil {
+		return nil, httpResponse, err
+	}
+	return *apiResponse, httpResponse, nil
+}
+
+func (f *HelmRepositoryFormatGroup) FormatSchemaAttributes() map[string]tfschema.Attribute {
+	return commonGroupSchemaAttributes(false)
+}
+
+func (f *HelmRepositoryFormatGroup) PlanAsModel(ctx context.Context, plan tfsdk.Plan) (any, diag.Diagnostics) {
+	var planModel model.RepositoryHelmGroupModel
+	return planModel, plan.Get(ctx, &planModel)
+}
+
+func (f *HelmRepositoryFormatGroup) StateAsModel(ctx context.Context, state tfsdk.State) (any, diag.Diagnostics) {
+	var stateModel model.RepositoryHelmGroupModel
+	return stateModel, state.Get(ctx, &stateModel)
+}
+
+func (f *HelmRepositoryFormatGroup) UpdatePlanForState(plan any) any {
+	var planModel = (plan).(model.RepositoryHelmGroupModel)
+	planModel.LastUpdated = types.StringValue(time.Now().Format(time.RFC850))
+	return planModel
+}
+
+func (f *HelmRepositoryFormatGroup) UpdateStateFromApi(state any, api any) any {
+	var stateModel model.RepositoryHelmGroupModel
+	if state != nil {
+		stateModel = (state).(model.RepositoryHelmGroupModel)
+	}
+	stateModel.FromApiModel((api).(sonatyperepo.SimpleApiGroupRepository))
+	return stateModel
 }

@@ -49,21 +49,21 @@ func NewWebhookRepositoryCapability() *WebhookRepositoryCapability {
 // --------------------------------------------
 // Capabiltiy Type: Webhook: Repository
 // --------------------------------------------
-func (f *WebhookRepositoryCapability) DoCreateRequest(plan any, apiClient *v3.APIClient, ctx context.Context, version common.SystemVersion) (*v3.CapabilityDTO, *http.Response, error) {
+func (f *WebhookRepositoryCapability) DoCreateRequest(plan any, svc common.CapabilityService, ctx context.Context, version common.SystemVersion) (*v3.CapabilityDTO, *http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.WebhookRepositoryCapabilityModel)
 
 	// Call API to Create
-	return apiClient.CapabilitiesAPI.Create3(ctx).Body(*planModel.ToApiCreateModel(version)).Execute()
+	return svc.Create(ctx, *planModel.ToApiCreateModel(version))
 }
 
-func (f *WebhookRepositoryCapability) DoUpdateRequest(plan any, capabilityId string, apiClient *v3.APIClient, ctx context.Context, version common.SystemVersion) (*http.Response, error) {
+func (f *WebhookRepositoryCapability) DoUpdateRequest(plan any, capabilityId string, svc common.CapabilityService, ctx context.Context, version common.SystemVersion) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.WebhookRepositoryCapabilityModel)
 	planModel.Id = types.StringValue(capabilityId)
 
 	// Call API to Update
-	return apiClient.CapabilitiesAPI.Update3(ctx, capabilityId).Body(*planModel.ToApiUpdateModel(version)).Execute()
+	return svc.Update(ctx, capabilityId, *planModel.ToApiUpdateModel(version))
 }
 
 func (f *WebhookRepositoryCapability) PlanAsModel(ctx context.Context, plan tfsdk.Plan) (any, diag.Diagnostics) {
@@ -88,7 +88,10 @@ func (f *WebhookRepositoryCapability) UpdatePlanForState(plan any) any {
 
 func (f *WebhookRepositoryCapability) UpdateStateFromApi(state any, api any) any {
 	stateModel := (state).(model.WebhookRepositoryCapabilityModel)
-	apiModel := (api).(*v3.CapabilityDTO)
+	apiModel, ok := (api).(*v3.CapabilityDTO)
+	if !ok || apiModel == nil {
+		return state
+	}
 	stateModel.FromApiModel(apiModel)
 	stateModel.LastUpdated = types.StringValue(time.Now().Format(time.RFC850))
 	return stateModel
@@ -97,7 +100,10 @@ func (f *WebhookRepositoryCapability) UpdateStateFromApi(state any, api any) any
 func (ct *WebhookRepositoryCapability) MapFromPlanToState(plan any, state any) any {
 	planModel := (plan).(model.WebhookRepositoryCapabilityModel)
 	stateModel := (state).(model.WebhookRepositoryCapabilityModel)
+	// Secret is sensitive and never returned by the API; stamp from plan.
 	stateModel.Properties.Secret = types.StringValue(planModel.Properties.Secret.ValueString())
+	// Repository can lag on HA clusters; stamp from plan to prevent drift.
+	stateModel.Properties.Repository = types.StringValue(planModel.Properties.Repository.ValueString())
 	return stateModel
 }
 

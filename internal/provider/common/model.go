@@ -31,14 +31,54 @@ import (
 )
 
 type SonatypeDataSourceData struct {
-	Auth         sonatyperepo.BasicAuth
-	BaseUrl      string
-	Client       *sonatyperepo.APIClient
-	NxrmVersion  SystemVersion
-	NxrmWritable bool
+	Auth                          sonatyperepo.BasicAuth
+	BaseUrl                       string
+	Client                        *sonatyperepo.APIClient
+	ClusterSynchronisationDelayMs int32
+	NodeCount                     int32
+	NxrmVersion                   SystemVersion
+	NxrmWritable                  bool
+	Services                      Services
+}
+
+// AuthContext returns a new context with authentication set up for API calls
+func (r *SonatypeDataSourceData) AuthContext(ctx context.Context) context.Context {
+	return WithAuth(ctx, r.Auth)
+}
+
+func (p *SonatypeDataSourceData) ClusterNodeCount(ctx context.Context, respDiags *diag.Diagnostics) {
+	// This runs during provider bootstrap, before NxrmVersion is known and before
+	// Services exists, so it must call the bootstrap (V382) client directly.
+	apiResponse, httpResponse, err := p.Client.StatusAPI.GetClusterSystemStatusChecks(p.AuthContext(ctx)).Execute()
+
+	if err != nil {
+		sharederr.HandleAPIError(
+			"Unable to check Sonatype Nexus Repository Cluster Node Count",
+			&err,
+			httpResponse,
+			respDiags,
+		)
+		return
+	}
+
+	if httpResponse.StatusCode != http.StatusOK {
+		sharederr.HandleAPIWarning(
+			"Unexpected response checking Sonatype Nexus Repository Cluster Node Count - assuming a single node",
+			&err,
+			httpResponse,
+			respDiags,
+		)
+		p.NodeCount = 1
+		return
+	}
+
+	p.NodeCount = int32(len(apiResponse))
+	tflog.Info(ctx, fmt.Sprintf("Determined Sonatype Nexus Repository Cluster to have %d Nodes", p.NodeCount))
 }
 
 func (p *SonatypeDataSourceData) CheckWritableAndGetVersion(ctx context.Context, respDiags *diag.Diagnostics, versionHint *string) {
+	// This runs during provider bootstrap, before NxrmVersion is known and before
+	// Services exists, so it must call the bootstrap (V382) client directly.
 	httpResponse, err := p.Client.StatusAPI.IsWritable(ctx).Execute()
 	if err != nil {
 		sharederr.HandleAPIError(
@@ -136,6 +176,21 @@ func (s *SystemVersion) RequiresLowerCaseRepostioryNameDocker() bool {
 func (s *SystemVersion) SupportsCapabilities() bool {
 	return s.NewerThan(3, 84, 0, 0)
 }
+
+func (s *SystemVersion) SupportsInlineFirewall() bool {
+	return s.NewerThan(3, 94, 0, 0)
+}
+
+// FirewallMode represents the inline `firewall.mode` value supported by NXRM 3.94+
+// proxy repository APIs, replacing the separate Capability-based firewall configuration.
+type FirewallMode string
+
+const (
+	FirewallModeDisabled   FirewallMode = "DISABLED"
+	FirewallModeAudit      FirewallMode = "AUDIT"
+	FirewallModeQuarantine FirewallMode = "QUARANTINE"
+	FirewallModePccs       FirewallMode = "PCCS"
+)
 
 func ParseServerHeaderToVersion(headerStr string) SystemVersion {
 	match := FindAllGroups(nxrmServerVersionExp, strings.ToUpper(headerStr))

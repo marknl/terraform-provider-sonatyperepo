@@ -1,0 +1,322 @@
+/*
+ * Copyright (c) 2019-present Sonatype, Inc.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package golang_test
+
+import (
+	"fmt"
+	"regexp"
+	"terraform-provider-sonatyperepo/internal/provider/common"
+	repotest "terraform-provider-sonatyperepo/internal/provider/repository/repotest"
+	"terraform-provider-sonatyperepo/internal/provider/testutil"
+	"testing"
+	utils_test "terraform-provider-sonatyperepo/internal/provider/utils"
+
+	"github.com/hashicorp/terraform-plugin-sdk/helper/acctest"
+	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+)
+
+const (
+	resourceTypeGoGroup  = "sonatyperepo_repository_go_group"
+	resourceTypeGoHosted = "sonatyperepo_repository_go_hosted"
+	resourceTypeGoProxy  = "sonatyperepo_repository_go_proxy"
+)
+
+var (
+	resourceGoGroupName  = fmt.Sprintf(utils_test.RES_NAME_FORMAT, resourceTypeGoGroup)
+	resourceGoHostedName = fmt.Sprintf(utils_test.RES_NAME_FORMAT, resourceTypeGoHosted)
+	resourceGoProxyName  = fmt.Sprintf(utils_test.RES_NAME_FORMAT, resourceTypeGoProxy)
+)
+
+func TestAccRepositoryGoResource(t *testing.T) {
+	randomString := acctest.RandStringFromCharSet(10, acctest.CharSetAlphaNum)
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: utils_test.TestAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create and Read testing
+			{
+				Config: fmt.Sprintf(utils_test.ProviderConfig+`
+resource "%s" "repo" {
+  name = "go-group-repo-%s"
+  online = true
+  storage = {
+	  blob_store_name = "default"
+	  strict_content_type_validation = true
+  }
+  group = {
+	  member_names = []
+  }
+}
+`, resourceTypeGoGroup, randomString),
+				ExpectError: regexp.MustCompile("Attribute group.member_names list must contain at least 1 elements"),
+			},
+			{
+				Config: fmt.Sprintf(utils_test.ProviderConfig+`
+resource "%s" "repo" {
+  name = "go-proxy-repo-%s"
+  online = true
+  storage = {
+    blob_store_name = "default"
+    strict_content_type_validation = true
+  }
+  proxy = {
+    remote_url = "https://proxy.golang.org/"
+    content_max_age = 1441
+    metadata_max_age = 1440
+  }
+  negative_cache = {
+    enabled = true
+    time_to_live = 1440
+  }
+  http_client = {
+    blocked = false
+    auto_block = true
+    connection = {
+      enable_cookies = true
+      retries = 9
+      timeout = 999
+      use_trust_store = true
+      user_agent_suffix = "terraform"
+    }
+    authentication = {
+      username = "user"
+      password = "pass"
+      preemptive = true
+      type = "username"
+    }
+  }
+}
+
+resource "%s" "repo" {
+  name = "go-group-repo-%s"
+  online = true
+  storage = {
+    blob_store_name = "default"
+    strict_content_type_validation = true
+  }
+  group = {
+	  member_names = ["go-proxy-repo-%s"]
+  }
+
+  depends_on = [
+	  %s.repo
+  ]
+}
+`, resourceTypeGoProxy, randomString, resourceTypeGoGroup, randomString, randomString, resourceTypeGoProxy),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					// Verify Proxy
+					resource.TestCheckResourceAttr(resourceGoProxyName, repotest.RES_ATTR_NAME, fmt.Sprintf("go-proxy-repo-%s", randomString)),
+					resource.TestCheckResourceAttr(resourceGoProxyName, repotest.RES_ATTR_ONLINE, "true"),
+					resource.TestCheckResourceAttrSet(resourceGoProxyName, repotest.RES_ATTR_URL),
+					resource.TestCheckResourceAttr(resourceGoProxyName, repotest.RES_ATTR_STORAGE_BLOB_STORE_NAME, common.DEFAULT_BLOB_STORE_NAME),
+					resource.TestCheckResourceAttr(resourceGoProxyName, repotest.RES_ATTR_STORAGE_STRICT_CONTENT_TYPE_VALIDATION, "true"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "proxy.remote_url", "https://proxy.golang.org/"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "proxy.content_max_age", "1441"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "proxy.metadata_max_age", "1440"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "negative_cache.enabled", "true"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "negative_cache.time_to_live", "1440"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "http_client.blocked", "false"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "http_client.auto_block", "true"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "http_client.connection.enable_circular_redirects", "false"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "http_client.connection.enable_cookies", "true"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "http_client.connection.use_trust_store", "true"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "http_client.connection.retries", "9"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "http_client.connection.timeout", "999"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "http_client.connection.user_agent_suffix", "terraform"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "http_client.authentication.username", "user"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "http_client.authentication.password", "pass"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "http_client.authentication.preemptive", "true"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "http_client.authentication.type", "username"),
+					resource.TestCheckNoResourceAttr(resourceGoProxyName, "routing_rule"),
+					resource.TestCheckResourceAttr(resourceGoProxyName, "replication.preemptive_pull_enabled", "false"),
+					resource.TestCheckNoResourceAttr(resourceGoProxyName, "replication.asset_path_regex"),
+
+					// Verify Group
+					resource.TestCheckResourceAttr(resourceGoGroupName, repotest.RES_ATTR_NAME, fmt.Sprintf("go-group-repo-%s", randomString)),
+					resource.TestCheckResourceAttr(resourceGoGroupName, repotest.RES_ATTR_ONLINE, "true"),
+					resource.TestCheckResourceAttrSet(resourceGoGroupName, repotest.RES_ATTR_URL),
+					resource.TestCheckResourceAttr(resourceGoGroupName, repotest.RES_ATTR_STORAGE_BLOB_STORE_NAME, common.DEFAULT_BLOB_STORE_NAME),
+					resource.TestCheckResourceAttr(resourceGoGroupName, "group.member_names.#", "1"),
+				),
+			},
+			// Delete testing automatically occurs in TestCase
+		},
+	})
+}
+
+func TestAccRepositoryGoGroupImport(t *testing.T) {
+	randomString := acctest.RandStringFromCharSet(10, acctest.CharSetAlphaNum)
+	repoName := fmt.Sprintf("go-group-import-%s", randomString)
+	memberName := fmt.Sprintf("go-proxy-member-%s", randomString)
+
+	resource.Test(t, resource.TestCase{
+		ProtoV6ProviderFactories: utils_test.TestAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create with minimal configuration
+			{
+				Config: fmt.Sprintf(utils_test.ProviderConfig+`
+resource "%s" "member" {
+  name = "%s"
+  online = true
+  storage = {
+    blob_store_name = "default"
+    strict_content_type_validation = true
+  }
+  proxy = {
+    remote_url = "https://proxy.golang.org/"
+    content_max_age = 1440
+    metadata_max_age = 1440
+  }
+  negative_cache = {
+    enabled = true
+    time_to_live = 1440
+  }
+  http_client = {
+    blocked = false
+    auto_block = true
+  }
+}
+
+resource "%s" "repo" {
+  name = "%s"
+  online = true
+  storage = {
+    blob_store_name = "default"
+    strict_content_type_validation = true
+  }
+  group = {
+    member_names = ["%s"]
+  }
+  depends_on = [%s.member]
+}
+`, resourceTypeGoProxy, memberName, resourceTypeGoGroup, repoName, memberName, resourceTypeGoProxy),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceGoGroupName, repotest.RES_ATTR_NAME, repoName),
+					resource.TestCheckResourceAttr(resourceGoGroupName, repotest.RES_ATTR_ONLINE, "true"),
+				),
+			},
+			// Import and verify no changes
+			{
+				ResourceName:                         resourceGoGroupName,
+				ImportState:                          true,
+				ImportStateVerify:                    true,
+				ImportStateId:                        repoName,
+				ImportStateVerifyIdentifierAttribute: "name",
+				ImportStateVerifyIgnore:              []string{"last_updated"},
+			},
+		},
+	})
+}
+
+func TestAccRepositoryGoHostedResource(t *testing.T) {
+	randomString := acctest.RandStringFromCharSet(10, acctest.CharSetAlphaNum)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck: func() {
+			// Requires NXRM 3.93.0+
+			testutil.SkipIfNxrmVersionInRange(t, &common.SystemVersion{
+				Major: 3,
+				Minor: 0,
+				Patch: 0,
+			}, &common.SystemVersion{
+				Major: 3,
+				Minor: 92,
+				Patch: 99,
+			})
+		},
+		ProtoV6ProviderFactories: utils_test.TestAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create and Read testing
+			{
+				Config: fmt.Sprintf(utils_test.ProviderConfig+`
+resource "%s" "repo" {
+  name = "go-hosted-repo-%s"
+  online = true
+  storage = {
+    blob_store_name = "default"
+    strict_content_type_validation = true
+    write_policy = "ALLOW"
+  }
+  component = {
+    proprietary_components = false
+  }
+}
+`, resourceTypeGoHosted, randomString),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceGoHostedName, repotest.RES_ATTR_NAME, fmt.Sprintf("go-hosted-repo-%s", randomString)),
+					resource.TestCheckResourceAttr(resourceGoHostedName, repotest.RES_ATTR_ONLINE, "true"),
+					resource.TestCheckResourceAttrSet(resourceGoHostedName, repotest.RES_ATTR_URL),
+					resource.TestCheckResourceAttr(resourceGoHostedName, repotest.RES_ATTR_STORAGE_BLOB_STORE_NAME, common.DEFAULT_BLOB_STORE_NAME),
+					resource.TestCheckResourceAttr(resourceGoHostedName, repotest.RES_ATTR_STORAGE_STRICT_CONTENT_TYPE_VALIDATION, "true"),
+					resource.TestCheckResourceAttr(resourceGoHostedName, "storage.write_policy", "ALLOW"),
+					resource.TestCheckResourceAttr(resourceGoHostedName, "component.proprietary_components", "false"),
+				),
+			},
+			// Delete testing automatically occurs in TestCase
+		},
+	})
+}
+
+func TestAccRepositoryGoHostedImport(t *testing.T) {
+	randomString := acctest.RandStringFromCharSet(10, acctest.CharSetAlphaNum)
+	repoName := fmt.Sprintf("go-hosted-import-%s", randomString)
+
+	resource.Test(t, resource.TestCase{
+		PreCheck: func() {
+			// Requires NXRM 3.93.0+
+			testutil.SkipIfNxrmVersionInRange(t, &common.SystemVersion{
+				Major: 3,
+				Minor: 0,
+				Patch: 0,
+			}, &common.SystemVersion{
+				Major: 3,
+				Minor: 92,
+				Patch: 99,
+			})
+		},
+		ProtoV6ProviderFactories: utils_test.TestAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			// Create with minimal configuration
+			{
+				Config: fmt.Sprintf(utils_test.ProviderConfig+`
+resource "%s" "repo" {
+  name = "%s"
+  online = true
+  storage = {
+    blob_store_name = "default"
+    strict_content_type_validation = true
+    write_policy = "ALLOW"
+  }
+}
+`, resourceTypeGoHosted, repoName),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(resourceGoHostedName, repotest.RES_ATTR_NAME, repoName),
+					resource.TestCheckResourceAttr(resourceGoHostedName, repotest.RES_ATTR_ONLINE, "true"),
+				),
+			},
+			// Import and verify no changes
+			{
+				ResourceName:                         resourceGoHostedName,
+				ImportState:                          true,
+				ImportStateVerify:                    true,
+				ImportStateId:                        repoName,
+				ImportStateVerifyIdentifierAttribute: "name",
+				ImportStateVerifyIgnore:              []string{"last_updated"},
+			},
+		},
+	})
+}

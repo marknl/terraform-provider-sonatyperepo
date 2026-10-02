@@ -46,6 +46,10 @@ type TerraformRepositoryFormatHosted struct {
 	TerraformRepositoryFormat
 }
 
+type TerraformRepositoryFormatGroup struct {
+	TerraformRepositoryFormat
+}
+
 // --------------------------------------------
 // Generic Terraform Format Functions
 // --------------------------------------------
@@ -60,24 +64,27 @@ func (f *TerraformRepositoryFormat) ResourceName(repoType RepositoryType) string
 // --------------------------------------------
 // PROXY Terraform Format Functions
 // --------------------------------------------
-func (f *TerraformRepositoryFormatProxy) DoCreateRequest(plan any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *TerraformRepositoryFormatProxy) DoCreateRequest(plan any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryTerraformProxyModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.CreateTerraformProxyRepository(ctx).Body(planModel.ToApiCreateModel()).Execute()
+	return apiClient.CreateTerraformProxyRepository(ctx, planModel.ToApiCreateModel())
 }
 
-func (f *TerraformRepositoryFormatProxy) DoReadRequest(state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *TerraformRepositoryFormatProxy) DoReadRequest(state any, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Cast to correct State Model Type
 	stateModel := (state).(model.RepositoryTerraformProxyModel)
 
 	// Call to API to Read
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetTerraformProxyRepository(ctx, stateModel.Name.ValueString()).Execute()
+	apiResponse, httpResponse, err := apiClient.GetTerraformProxyRepository(ctx, stateModel.Name.ValueString())
+	if apiResponse == nil {
+		return nil, httpResponse, err
+	}
 	return *apiResponse, httpResponse, err
 }
 
-func (f *TerraformRepositoryFormatProxy) DoUpdateRequest(plan any, state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *TerraformRepositoryFormatProxy) DoUpdateRequest(plan any, state any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryTerraformProxyModel)
 
@@ -85,13 +92,13 @@ func (f *TerraformRepositoryFormatProxy) DoUpdateRequest(plan any, state any, ap
 	stateModel := (state).(model.RepositoryTerraformProxyModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.UpdateTerraformProxyRepository(ctx, stateModel.Name.ValueString()).Body(planModel.ToApiUpdateModel()).Execute()
+	return apiClient.UpdateTerraformProxyRepository(ctx, stateModel.Name.ValueString(), planModel.ToApiUpdateModel())
 }
 
 // DoImportRequest implements the import functionality for HuggingFace Proxy repositories
-func (f *TerraformRepositoryFormatProxy) DoImportRequest(repositoryName string, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *TerraformRepositoryFormatProxy) DoImportRequest(repositoryName string, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Call to API to Read repository for import
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetTerraformProxyRepository(ctx, repositoryName).Execute()
+	apiResponse, httpResponse, err := apiClient.GetTerraformProxyRepository(ctx, repositoryName)
 	if err != nil {
 		return nil, httpResponse, err
 	}
@@ -99,9 +106,15 @@ func (f *TerraformRepositoryFormatProxy) DoImportRequest(repositoryName string, 
 }
 
 func (f *TerraformRepositoryFormatProxy) FormatSchemaAttributes() map[string]tfschema.Attribute {
-	additionalAttributes := commonProxySchemaAttributes(f.SupportsRepositoryFirewall(), f.SupportsRepositoryFirewallPccs())
+	additionalAttributes := commonProxySchemaAttributes(f.SupportsRepositoryFirewall(), f.SupportsRepositoryFirewallPccs(), f.SupportsPreemptiveAuthentication())
 	maps.Copy(additionalAttributes, terraformProxySchemaAttributes())
 	return additionalAttributes
+}
+
+// Terraform proxy is one of only three formats (alongside Maven and PyPI) whose NXRM API
+// supports pre-emptive authentication - see GH-493.
+func (f *TerraformRepositoryFormatProxy) SupportsPreemptiveAuthentication() bool {
+	return true
 }
 
 func (f *TerraformRepositoryFormatProxy) PlanAsModel(ctx context.Context, plan tfsdk.Plan) (any, diag.Diagnostics) {
@@ -149,24 +162,27 @@ func (f *TerraformRepositoryFormatProxy) SupportsRepositoryFirewall() bool {
 // --------------------------------------------
 // HOSTED Terraform Format Functions
 // --------------------------------------------
-func (f *TerraformRepositoryFormatHosted) DoCreateRequest(plan any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *TerraformRepositoryFormatHosted) DoCreateRequest(plan any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryTerraformHostedModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.CreateTerraformHostedRepository(ctx).Body(planModel.ToApiCreateModel()).Execute()
+	return apiClient.CreateTerraformHostedRepository(ctx, planModel.ToApiCreateModel())
 }
 
-func (f *TerraformRepositoryFormatHosted) DoReadRequest(state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *TerraformRepositoryFormatHosted) DoReadRequest(state any, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Cast to correct State Model Type
 	stateModel := (state).(model.RepositoryTerraformHostedModel)
 
 	// Call to API to Read
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetTerraformHostedRepository(ctx, stateModel.Name.ValueString()).Execute()
+	apiResponse, httpResponse, err := apiClient.GetTerraformHostedRepository(ctx, stateModel.Name.ValueString())
+	if apiResponse == nil {
+		return nil, httpResponse, err
+	}
 	return *apiResponse, httpResponse, err
 }
 
-func (f *TerraformRepositoryFormatHosted) DoUpdateRequest(plan any, state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *TerraformRepositoryFormatHosted) DoUpdateRequest(plan any, state any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryTerraformHostedModel)
 
@@ -174,13 +190,13 @@ func (f *TerraformRepositoryFormatHosted) DoUpdateRequest(plan any, state any, a
 	stateModel := (state).(model.RepositoryTerraformHostedModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.UpdateTerraformHostedRepository(ctx, stateModel.Name.ValueString()).Body(planModel.ToApiUpdateModel()).Execute()
+	return apiClient.UpdateTerraformHostedRepository(ctx, stateModel.Name.ValueString(), planModel.ToApiUpdateModel())
 }
 
 // DoImportRequest implements the import functionality for HuggingFace Proxy repositories
-func (f *TerraformRepositoryFormatHosted) DoImportRequest(repositoryName string, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *TerraformRepositoryFormatHosted) DoImportRequest(repositoryName string, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Call to API to Read repository for import
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetTerraformHostedRepository(ctx, repositoryName).Execute()
+	apiResponse, httpResponse, err := apiClient.GetTerraformHostedRepository(ctx, repositoryName)
 	if err != nil {
 		return nil, httpResponse, err
 	}
@@ -188,9 +204,7 @@ func (f *TerraformRepositoryFormatHosted) DoImportRequest(repositoryName string,
 }
 
 func (f *TerraformRepositoryFormatHosted) FormatSchemaAttributes() map[string]tfschema.Attribute {
-	additionalAttributes := commonHostedSchemaAttributes()
-	maps.Copy(additionalAttributes, terraformHostedSchemaAttributes())
-	return additionalAttributes
+	return terraformHostedSchemaAttributes()
 }
 
 func (f *TerraformRepositoryFormatHosted) PlanAsModel(ctx context.Context, plan tfsdk.Plan) (any, diag.Diagnostics) {
@@ -217,6 +231,90 @@ func (f *TerraformRepositoryFormatHosted) UpdateStateFromApi(state, api any) any
 	}
 	stateModel.FromApiModel((api).(sonatyperepo.TerraformHostedRepositoryApiRequest))
 	return stateModel
+}
+
+// --------------------------------------------
+// GROUP Terraform Format Functions
+// --------------------------------------------
+func (f *TerraformRepositoryFormatGroup) DoCreateRequest(plan any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
+	// Cast to correct Plan Model Type
+	planModel := (plan).(model.RepositoryTerraformGroupModel)
+
+	// Call API to Create
+	return apiClient.CreateTerraformGroupRepository(ctx, planModel.ToApiCreateModel())
+}
+
+func (f *TerraformRepositoryFormatGroup) DoReadRequest(state any, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
+	// Cast to correct State Model Type
+	stateModel := (state).(model.RepositoryTerraformGroupModel)
+
+	// Call to API to Read
+	apiResponse, httpResponse, err := apiClient.GetTerraformGroupRepository(ctx, stateModel.Name.ValueString())
+	if apiResponse == nil {
+		return nil, httpResponse, err
+	}
+	return *apiResponse, httpResponse, err
+}
+
+func (f *TerraformRepositoryFormatGroup) DoUpdateRequest(plan any, state any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
+	// Cast to correct Plan Model Type
+	planModel := (plan).(model.RepositoryTerraformGroupModel)
+
+	// Cast to correct State Model Type
+	stateModel := (state).(model.RepositoryTerraformGroupModel)
+
+	// Call API to Create
+	return apiClient.UpdateTerraformGroupRepository(ctx, stateModel.Name.ValueString(), planModel.ToApiUpdateModel())
+}
+
+// DoImportRequest implements the import functionality for Maven Group repositories
+func (f *TerraformRepositoryFormatGroup) DoImportRequest(repositoryName string, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
+	// Call to API to Read repository for import
+	apiResponse, httpResponse, err := apiClient.GetTerraformGroupRepository(ctx, repositoryName)
+	if err != nil {
+		return nil, httpResponse, err
+	}
+	return *apiResponse, httpResponse, nil
+}
+
+func (f *TerraformRepositoryFormatGroup) FormatSchemaAttributes() map[string]tfschema.Attribute {
+	additionalAttributes := commonGroupSchemaAttributes(false)
+	maps.Copy(additionalAttributes, terraformProxySchemaAttributes())
+	return additionalAttributes
+}
+
+func (f *TerraformRepositoryFormatGroup) PlanAsModel(ctx context.Context, plan tfsdk.Plan) (any, diag.Diagnostics) {
+	var planModel model.RepositoryTerraformGroupModel
+	return planModel, plan.Get(ctx, &planModel)
+}
+
+func (f *TerraformRepositoryFormatGroup) StateAsModel(ctx context.Context, state tfsdk.State) (any, diag.Diagnostics) {
+	var stateModel model.RepositoryTerraformGroupModel
+	return stateModel, state.Get(ctx, &stateModel)
+}
+
+func (f *TerraformRepositoryFormatGroup) UpdatePlanForState(plan any) any {
+	var planModel = (plan).(model.RepositoryTerraformGroupModel)
+	planModel.LastUpdated = types.StringValue(time.Now().Format(time.RFC850))
+	return planModel
+}
+
+func (f *TerraformRepositoryFormatGroup) UpdateStateFromApi(state any, api any) any {
+	var stateModel model.RepositoryTerraformGroupModel
+	// During import, state might be nil, so we create a new model
+	if state != nil {
+		stateModel = (state).(model.RepositoryTerraformGroupModel)
+	}
+	stateModel.FromApiModel((api).(sonatyperepo.TerraformGroupApiRepository))
+	return stateModel
+}
+
+func (f *TerraformRepositoryFormatGroup) AdditionalSchemaDescription() string {
+	return `
+
+**NOTE:** This resource requires against Sonatype Nexus Repository 3.90.x or later - see 
+[here](https://help.sonatype.com/en/sonatype-nexus-repository-3-90-0-release-notes.html)
+for details.`
 }
 
 // --------------------------------------------

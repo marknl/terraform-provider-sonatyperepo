@@ -18,17 +18,26 @@ package provider_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"strings"
+	"terraform-provider-sonatyperepo/internal/provider/testutil"
 	"testing"
+	"time"
 
 	v3 "github.com/sonatype-nexus-community/nexus-repo-api-client-go/v3"
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv("TF_ACC_IQ_SERVER") == "1" {
+		log.Println("Connecting Sonatype Nexus Repository Manager to Sonatype IQ Server...")
+		configureIqConnection()
+	}
+
 	if os.Getenv("TF_ACC_HA_MODE") == "1" && os.Getenv("TF_ACC_HA_BLOB_STORE_PATH") != "" {
 		log.Println("Setting up resources for Sonatype Nexus Repository in HA Mode...")
 
@@ -49,8 +58,10 @@ func TestMain(m *testing.M) {
 		// Create Default Blobstore
 		createDefaultBlobStore(nxrmClient, &ctx)
 
-		// Create Maven Central Proxy Repository
+		// Create Maven Central Proxy Repository, then wait until all cluster
+		// nodes have replicated it before running tests.
 		createMavenCentralProxy(nxrmClient, &ctx)
+		waitForRepositoryReplication(os.Getenv("NXRM_SERVER_URL"), os.Getenv("NXRM_SERVER_USERNAME"), os.Getenv("NXRM_SERVER_PASSWORD"), "maven-central", 3)
 
 	} else {
 		log.Println("Continuing in non-HA Mode...")
@@ -59,6 +70,39 @@ func TestMain(m *testing.M) {
 	// Run Tests
 	exitCode := m.Run()
 	os.Exit(exitCode)
+}
+
+// configureIqConnection points the NXRM instance under test at a live Sonatype IQ Server and
+// verifies the connection actually works, so that acceptance tests exercising
+// repository_firewall (which NXRM rejects with "not connected to Sonatype IQ" unless a real,
+// verified connection exists) have one in place before any test runs. Gated on
+// TF_ACC_IQ_SERVER=1 - see testutil.SkipIfNoIqServer and
+// https://github.com/sonatype-nexus-community/terraform-provider-sonatyperepo/issues/285.
+func configureIqConnection() {
+	if os.Getenv("NXRM_SERVER_URL") == "" {
+		log.Fatal("TF_ACC_IQ_SERVER=1 but NXRM_SERVER_URL is not set")
+	}
+
+	// TestAccSystemIqConnectionResource (internal/provider/system) writes to this same shared
+	// singleton and can run concurrently with this bootstrap, since `go test ./...` compiles
+	// each package to its own binary and can start them at the same time. Without this lock,
+	// this write and that test's steps can interleave and produce spurious refresh drift.
+	unlock, err := testutil.LockIqConnection(2 * time.Minute)
+	if err != nil {
+		log.Fatalf("Failed to acquire IQ connection lock: %v", err)
+	}
+	defer unlock()
+
+	if err := testutil.ConfigureIqConnection(); err != nil {
+		log.Fatalf("Failed to configure Sonatype IQ Server connection: %v", err)
+	}
+
+	success, reason, err := testutil.VerifyIqConnection()
+	if err != nil || !success {
+		log.Fatalf("Sonatype IQ Server connection could not be verified: %v (%s)", err, reason)
+	}
+
+	log.Println("Sonatype IQ Server connection configured and verified.")
 }
 
 func createDefaultBlobStore(nxrmClient *v3.APIClient, ctx *context.Context) {
@@ -77,12 +121,67 @@ func createDefaultBlobStore(nxrmClient *v3.APIClient, ctx *context.Context) {
 	}
 }
 
+// repositoryVisibleAt returns true when repoName appears in a single GET to listURL.
+func repositoryVisibleAt(httpClient *http.Client, listURL, username, password, repoName string) bool {
+	req, err := http.NewRequest(http.MethodGet, listURL, nil)
+	if err != nil {
+		return false
+	}
+	req.SetBasicAuth(username, password)
+	resp, err := httpClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return false
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	var repos []struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(body, &repos) != nil {
+		return false
+	}
+	for _, r := range repos {
+		if r.Name == repoName {
+			return true
+		}
+	}
+	return false
+}
+
+// waitForRepositoryReplication polls the load-balancer until repoName is visible
+// on nodeCount consecutive round-robin responses, confirming all cluster nodes
+// have replicated the repository before tests begin.
+func waitForRepositoryReplication(serverURL, username, password, repoName string, nodeCount int) {
+	if serverURL == "" {
+		return
+	}
+	listURL := fmt.Sprintf("%s/service/rest/v1/repositories", strings.TrimRight(serverURL, "/"))
+	httpClient := &http.Client{Timeout: 15 * time.Second}
+	consecutive := 0
+	for attempt := 0; attempt < 40 && consecutive < nodeCount; attempt++ {
+		if repositoryVisibleAt(httpClient, listURL, username, password, repoName) {
+			consecutive++
+			log.Printf("waitForRepositoryReplication: '%s' confirmed (%d/%d consecutive)", repoName, consecutive, nodeCount)
+		} else {
+			consecutive = 0
+			log.Printf("waitForRepositoryReplication: '%s' not yet visible (attempt %d), retrying...", repoName, attempt+1)
+			time.Sleep(3 * time.Second)
+		}
+	}
+	if consecutive < nodeCount {
+		log.Printf("waitForRepositoryReplication: WARNING — '%s' may not be visible on all nodes after polling", repoName)
+	}
+}
+
 func createMavenCentralProxy(nxrmClient *v3.APIClient, ctx *context.Context) {
+	httpClient := v3.NewHttpClientAttributesWithPreemptiveAuth()
+	httpClient.AutoBlock = v3.PtrBool(true)
+	httpClient.Blocked = v3.PtrBool(false)
 	httpResponse, err := nxrmClient.RepositoryManagementAPI.CreateMavenProxyRepository(*ctx).Body(
 		v3.MavenProxyRepositoryApiRequest{
 			Name:       "maven-central",
 			Online:     true,
-			HttpClient: *v3.NewHttpClientAttributesWithPreemptiveAuth(true, false),
+			HttpClient: *httpClient,
 			NegativeCache: v3.NegativeCacheAttributes{
 				Enabled:    true,
 				TimeToLive: 1440,

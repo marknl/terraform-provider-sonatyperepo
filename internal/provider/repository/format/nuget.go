@@ -64,27 +64,27 @@ func (f *NugetRepositoryFormat) ResourceName(repoType RepositoryType) string {
 // --------------------------------------------
 // Hosted Nuget Format Functions
 // --------------------------------------------
-func (f *NugetRepositoryFormatHosted) DoCreateRequest(plan any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *NugetRepositoryFormatHosted) DoCreateRequest(plan any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryNugetHostedModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.CreateNugetHostedRepository(ctx).Body(planModel.ToApiCreateModel()).Execute()
+	return apiClient.CreateNugetHostedRepository(ctx, planModel.ToApiCreateModel())
 }
 
-func (f *NugetRepositoryFormatHosted) DoReadRequest(state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *NugetRepositoryFormatHosted) DoReadRequest(state any, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Cast to correct State Model Type
 	stateModel := (state).(model.RepositoryNugetHostedModel)
 
 	// Call to API to Read
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetNugetHostedRepository(ctx, stateModel.Name.ValueString()).Execute()
+	apiResponse, httpResponse, err := apiClient.GetNugetHostedRepository(ctx, stateModel.Name.ValueString())
 	if err != nil {
 		return nil, httpResponse, err
 	}
 	return *apiResponse, httpResponse, err
 }
 
-func (f *NugetRepositoryFormatHosted) DoUpdateRequest(plan any, state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *NugetRepositoryFormatHosted) DoUpdateRequest(plan any, state any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryNugetHostedModel)
 
@@ -92,7 +92,7 @@ func (f *NugetRepositoryFormatHosted) DoUpdateRequest(plan any, state any, apiCl
 	stateModel := (state).(model.RepositoryNugetHostedModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.UpdateNugetHostedRepository(ctx, stateModel.Name.ValueString()).Body(planModel.ToApiUpdateModel()).Execute()
+	return apiClient.UpdateNugetHostedRepository(ctx, stateModel.Name.ValueString(), planModel.ToApiUpdateModel())
 }
 
 func (f *NugetRepositoryFormatHosted) FormatSchemaAttributes() map[string]tfschema.Attribute {
@@ -127,9 +127,9 @@ func (f *NugetRepositoryFormatHosted) UpdateStateFromApi(state any, api any) any
 }
 
 // DoImportRequest implements the import functionality for NuGet Hosted repositories
-func (f *NugetRepositoryFormatHosted) DoImportRequest(repositoryName string, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *NugetRepositoryFormatHosted) DoImportRequest(repositoryName string, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Call to API to Read repository for import
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetNugetHostedRepository(ctx, repositoryName).Execute()
+	apiResponse, httpResponse, err := apiClient.GetNugetHostedRepository(ctx, repositoryName)
 	if err != nil {
 		return nil, httpResponse, err
 	}
@@ -139,49 +139,55 @@ func (f *NugetRepositoryFormatHosted) DoImportRequest(repositoryName string, api
 // --------------------------------------------
 // PROXY Nuget Format Functions
 // --------------------------------------------
-func (f *NugetRepositoryFormatProxy) DoCreateRequest(plan any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *NugetRepositoryFormatProxy) DoCreateRequest(plan any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryNugetProxyModel)
 
+	// Compute inline firewall mode (NXRM 3.94+); ignored by pre-3.94 service implementations
+	firewallMode := ComputeFirewallMode(f, planModel)
+
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.CreateNugetProxyRepository(ctx).Body(planModel.ToApiCreateModel()).Execute()
+	return apiClient.CreateNugetProxyRepository(ctx, planModel.ToApiCreateModel(), &firewallMode)
 }
 
-func (f *NugetRepositoryFormatProxy) DoReadRequest(state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *NugetRepositoryFormatProxy) DoReadRequest(state any, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Cast to correct State Model Type
 	stateModel := (state).(model.RepositoryNugetProxyModel)
 
 	// Call to API to Read
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetNugetProxyRepository(ctx, stateModel.Name.ValueString()).Execute()
+	apiResponse, firewallMode, httpResponse, err := apiClient.GetNugetProxyRepository(ctx, stateModel.Name.ValueString())
 	if err != nil {
 		return nil, httpResponse, err
 	}
-	return *apiResponse, httpResponse, err
+	return ProxyApiResponseWithFirewall{Repository: *apiResponse, FirewallMode: firewallMode}, httpResponse, err
 }
 
-func (f *NugetRepositoryFormatProxy) DoUpdateRequest(plan any, state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *NugetRepositoryFormatProxy) DoUpdateRequest(plan any, state any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryNugetProxyModel)
 
 	// Cast to correct State Model Type
 	stateModel := (state).(model.RepositoryNugetProxyModel)
 
+	// Compute inline firewall mode (NXRM 3.94+); ignored by pre-3.94 service implementations
+	firewallMode := ComputeFirewallMode(f, planModel)
+
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.UpdateNugetProxyRepository(ctx, stateModel.Name.ValueString()).Body(planModel.ToApiUpdateModel()).Execute()
+	return apiClient.UpdateNugetProxyRepository(ctx, stateModel.Name.ValueString(), planModel.ToApiUpdateModel(), &firewallMode)
 }
 
 // DoImportRequest implements the import functionality for NuGet Proxy repositories
-func (f *NugetRepositoryFormatProxy) DoImportRequest(repositoryName string, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *NugetRepositoryFormatProxy) DoImportRequest(repositoryName string, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Call to API to Read repository for import
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetNugetProxyRepository(ctx, repositoryName).Execute()
+	apiResponse, firewallMode, httpResponse, err := apiClient.GetNugetProxyRepository(ctx, repositoryName)
 	if err != nil {
 		return nil, httpResponse, err
 	}
-	return *apiResponse, httpResponse, nil
+	return ProxyApiResponseWithFirewall{Repository: *apiResponse, FirewallMode: firewallMode}, httpResponse, nil
 }
 
 func (f *NugetRepositoryFormatProxy) FormatSchemaAttributes() map[string]tfschema.Attribute {
-	additionalAttributes := commonProxySchemaAttributes(f.SupportsRepositoryFirewall(), f.SupportsRepositoryFirewallPccs())
+	additionalAttributes := commonProxySchemaAttributes(f.SupportsRepositoryFirewall(), f.SupportsRepositoryFirewallPccs(), f.SupportsPreemptiveAuthentication())
 	maps.Copy(additionalAttributes, nugetProxySchemaAttributes())
 	return additionalAttributes
 }
@@ -208,6 +214,27 @@ func (f *NugetRepositoryFormatProxy) UpdateStateFromApi(state any, api any) any 
 	if state != nil {
 		stateModel = (state).(model.RepositoryNugetProxyModel)
 	}
+
+	// NXRM 3.94+ returns the repository wrapped with its inline firewall mode; use that
+	// directly instead of the Capability-based UpateStateWithCapability path.
+	if wrapped, ok := api.(ProxyApiResponseWithFirewall); ok {
+		stateModel.FromApiModel((wrapped.Repository).(sonatyperepo.NugetProxyApiRepository))
+		if wrapped.FirewallMode != nil {
+			keep, enabled, quarantine, _ := ResolveFirewallBlockFlags(stateModel.FirewallAuditAndQuarantine != nil, *wrapped.FirewallMode)
+			if !keep {
+				stateModel.FirewallAuditAndQuarantine = nil
+			} else {
+				if stateModel.FirewallAuditAndQuarantine == nil {
+					stateModel.FirewallAuditAndQuarantine = model.NewFirewallAuditAndQuarantineModelWithDefaults()
+				}
+				stateModel.FirewallAuditAndQuarantine.CapabilityId = types.StringNull()
+				stateModel.FirewallAuditAndQuarantine.Enabled = types.BoolValue(enabled)
+				stateModel.FirewallAuditAndQuarantine.Quarantine = types.BoolValue(quarantine)
+			}
+		}
+		return stateModel
+	}
+
 	stateModel.FromApiModel((api).(sonatyperepo.NugetProxyApiRepository))
 	return stateModel
 }
@@ -221,6 +248,7 @@ func (f *NugetRepositoryFormatProxy) UpdateStateFromPlanForNonApiFields(plan, st
 	}
 
 	stateModel.MapMissingApiFieldsFromPlan(planModel)
+	stateModel.FirewallAuditAndQuarantine = ReconcileFirewallBlockWithPlan(stateModel.FirewallAuditAndQuarantine, planModel.FirewallAuditAndQuarantine)
 	return stateModel
 }
 
@@ -281,27 +309,27 @@ func (f *NugetRepositoryFormatProxy) GetRepositoryFirewallQuarantineEnabled(stat
 // --------------------------------------------
 // GROUP Nuget Format Functions
 // --------------------------------------------
-func (f *NugetRepositoryFormatGroup) DoCreateRequest(plan any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *NugetRepositoryFormatGroup) DoCreateRequest(plan any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryNugetGroupModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.CreateNugetGroupRepository(ctx).Body(planModel.ToApiCreateModel()).Execute()
+	return apiClient.CreateNugetGroupRepository(ctx, planModel.ToApiCreateModel())
 }
 
-func (f *NugetRepositoryFormatGroup) DoReadRequest(state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *NugetRepositoryFormatGroup) DoReadRequest(state any, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Cast to correct State Model Type
 	stateModel := (state).(model.RepositoryNugetGroupModel)
 
 	// Call to API to Read
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetNugetGroupRepository(ctx, stateModel.Name.ValueString()).Execute()
+	apiResponse, httpResponse, err := apiClient.GetNugetGroupRepository(ctx, stateModel.Name.ValueString())
 	if err != nil {
 		return nil, httpResponse, err
 	}
 	return *apiResponse, httpResponse, err
 }
 
-func (f *NugetRepositoryFormatGroup) DoUpdateRequest(plan any, state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *NugetRepositoryFormatGroup) DoUpdateRequest(plan any, state any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryNugetGroupModel)
 
@@ -309,7 +337,7 @@ func (f *NugetRepositoryFormatGroup) DoUpdateRequest(plan any, state any, apiCli
 	stateModel := (state).(model.RepositoryNugetGroupModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.UpdateNugetGroupRepository(ctx, stateModel.Name.ValueString()).Body(planModel.ToApiUpdateModel()).Execute()
+	return apiClient.UpdateNugetGroupRepository(ctx, stateModel.Name.ValueString(), planModel.ToApiUpdateModel())
 }
 
 func (f *NugetRepositoryFormatGroup) FormatSchemaAttributes() map[string]tfschema.Attribute {
@@ -343,9 +371,9 @@ func (f *NugetRepositoryFormatGroup) UpdateStateFromApi(state any, api any) any 
 }
 
 // DoImportRequest implements the import functionality for NuGet Group repositories
-func (f *NugetRepositoryFormatGroup) DoImportRequest(repositoryName string, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *NugetRepositoryFormatGroup) DoImportRequest(repositoryName string, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Call to API to Read repository for import
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetNugetGroupRepository(ctx, repositoryName).Execute()
+	apiResponse, httpResponse, err := apiClient.GetNugetGroupRepository(ctx, repositoryName)
 	if err != nil {
 		return nil, httpResponse, err
 	}

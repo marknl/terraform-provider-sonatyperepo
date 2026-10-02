@@ -33,7 +33,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	sonatyperepo "github.com/sonatype-nexus-community/nexus-repo-api-client-go/v3"
 
 	"terraform-provider-sonatyperepo/internal/provider/capability"
 	"terraform-provider-sonatyperepo/internal/provider/common"
@@ -51,6 +50,7 @@ const (
 	REPOSITORY_GENERAL_ERROR_RESPONSE_GENERAL  = REPOSITORY_ERROR_RESPONSE_PREFIX + " %s"
 	REPOSITORY_GENERAL_ERROR_RESPONSE_WITH_ERR = REPOSITORY_ERROR_RESPONSE_PREFIX + " %s - %s"
 	REPOSITORY_ERROR_DID_NOT_EXIST             = "%s %s Repository did not exist to %s"
+	REPOSITORY_ERROR_UPDATE_FAILED             = "Error updating %s %s Repository"
 )
 
 // Generic to all Repository Resources
@@ -81,31 +81,38 @@ func (r *repositoryResource) Create(ctx context.Context, req resource.CreateRequ
 	}
 
 	// Setup context with auth
-	ctx = r.setupAuthContext(ctx)
+	ctx = r.AuthContext(ctx)
+
+	// Build an API-safe copy of the plan that omits http_client.connection when the
+	// user's config left it unset, so we don't send computed defaults to NXRM as if
+	// they were explicitly configured. State is still populated from the original plan.
+	apiPlan := suppressUnconfiguredConnectionFromConfig(ctx, plan, req.Config)
 
 	// Verify IQ connection if needed for firewall
-	if r.NxrmVersion.SupportsCapabilities() && !r.verifyIQConnectionIfNeeded(ctx, plan, &resp.Diagnostics) {
+	if r.usesCapabilityBasedFirewall() && !r.verifyIQConnectionIfNeeded(ctx, apiPlan, &resp.Diagnostics) {
 		return
 	}
 
 	// Create the repository
-	if !r.createRepository(ctx, plan, resp) {
+	if !r.createRepository(ctx, apiPlan, resp) {
 		return
 	}
 
 	// Fetch complete data
-	apiResponse, ok := r.readCreatedRepository(ctx, plan, &resp.Diagnostics, &resp.State)
+	apiResponse, ok := r.readCreatedRepository(ctx, apiPlan, &resp.Diagnostics, &resp.State)
 	if !ok {
 		return
 	}
 
 	// Map to state
 	stateModel := r.RepositoryFormat.UpdateStateFromApi(plan, apiResponse)
+	// Copy various fields not returned by a READ from Plan (e.g., sensitive auth fields)
+	stateModel = r.RepositoryFormat.UpdateStateFromPlanForNonApiFields(plan, stateModel)
 	stateModel = r.RepositoryFormat.UpdatePlanForState(stateModel)
 
 	// Configure firewall if needed
-	if r.NxrmVersion.SupportsCapabilities() && r.isProxyWithFirewall() {
-		stateModel = r.configureFirewall(ctx, plan, stateModel, &resp.Diagnostics, &resp.State)
+	if r.usesCapabilityBasedFirewall() && r.isProxyWithFirewall() {
+		stateModel = r.configureFirewall(ctx, apiPlan, stateModel, &resp.Diagnostics, &resp.State)
 		if resp.Diagnostics.HasError() {
 			return
 		}
@@ -113,6 +120,51 @@ func (r *repositoryResource) Create(ctx context.Context, req resource.CreateRequ
 
 	// Save to state
 	resp.Diagnostics.Append(resp.State.Set(ctx, stateModel)...)
+}
+
+// suppressUnconfiguredConnectionFromConfig returns a copy of plan with
+// HttpClient.Connection zeroed out (nil) if the raw Config left http_client.connection
+// unset. This prevents outbound API requests from including a fully populated
+// connection object made up entirely of schema-computed defaults, which NXRM would
+// otherwise treat as explicitly-configured custom HTTP client settings.
+//
+// Proxy repository formats promote an HttpClient field (via embedding
+// RepositoryProxyModel); non-proxy formats don't have one, in which case plan is
+// returned unchanged. The original plan value is left untouched - callers should keep
+// using it for anything that feeds into Terraform state.
+func suppressUnconfiguredConnectionFromConfig(ctx context.Context, plan any, config tfsdk.Config) any {
+	planVal := reflect.ValueOf(plan)
+	if planVal.Kind() != reflect.Struct {
+		return plan
+	}
+
+	httpClientField := planVal.FieldByName("HttpClient")
+	if !httpClientField.IsValid() {
+		// Not a proxy repository format - nothing to do
+		return plan
+	}
+
+	// Decode raw Config into an instance of the same concrete type as plan
+	configPtr := reflect.New(planVal.Type())
+	diags := config.Get(ctx, configPtr.Interface())
+	if diags.HasError() {
+		return plan
+	}
+
+	configConnField := configPtr.Elem().FieldByName("HttpClient").FieldByName("Connection")
+	if !configConnField.IsValid() || !configConnField.IsNil() {
+		// Config explicitly set connection (or field doesn't exist) - leave plan untouched
+		return plan
+	}
+
+	// Config left `connection` unset: clone plan and nil its Connection so the
+	// outbound API request omits it, without touching the value used for state.
+	clonePtr := reflect.New(planVal.Type())
+	clonePtr.Elem().Set(planVal)
+	clonePtr.Elem().FieldByName("HttpClient").FieldByName("Connection").Set(
+		reflect.Zero(configConnField.Type()),
+	)
+	return clonePtr.Elem().Interface()
 }
 
 // validateAndParsePlan retrieves and validates the plan
@@ -135,18 +187,13 @@ func (r *repositoryResource) validateAndParsePlan(ctx context.Context, req resou
 	return plan, diags
 }
 
-// setupAuthContext adds authentication to the context
-func (r *repositoryResource) setupAuthContext(ctx context.Context) context.Context {
-	return context.WithValue(ctx, sonatyperepo.ContextBasicAuth, r.Auth)
-}
-
 // verifyIQConnectionIfNeeded checks IQ connection for proxy repositories with firewall enabled
 func (r *repositoryResource) verifyIQConnectionIfNeeded(ctx context.Context, plan any, respDiags *diag.Diagnostics) bool {
 	if r.RepositoryType != format.REPO_TYPE_PROXY || !r.RepositoryFormat.SupportsRepositoryFirewall() || !r.RepositoryFormat.GetRepositoryFirewallEnabled(plan) {
 		return true
 	}
 
-	iqCheckResponse, httpResponse, err := r.Client.ManageSonatypeRepositoryFirewallConfigurationAPI.VerifyIqConnection(ctx).Execute()
+	iqCheckResponse, httpResponse, err := r.Services.Configuration.VerifyIqConnection(ctx)
 	if err != nil || httpResponse.StatusCode != http.StatusOK || !*iqCheckResponse.Success {
 		respDiags.AddError("Sonatype IQ Connection not successful", "Unable to configure Repository Firewall as not connected to Sonatype IQ Server")
 		return false
@@ -156,7 +203,7 @@ func (r *repositoryResource) verifyIQConnectionIfNeeded(ctx context.Context, pla
 
 // createRepository creates the repository via API
 func (r *repositoryResource) createRepository(ctx context.Context, plan any, resp *resource.CreateResponse) bool {
-	httpResponse, err := r.RepositoryFormat.DoCreateRequest(plan, r.Client, ctx)
+	httpResponse, err := r.RepositoryFormat.DoCreateRequest(plan, r.Services.Repository, ctx)
 	if err != nil {
 		errors.HandleAPIError(
 			fmt.Sprintf("Error creating %s %s Repository", r.RepositoryFormat.Key(), r.RepositoryType.String()),
@@ -178,19 +225,42 @@ func (r *repositoryResource) createRepository(ctx context.Context, plan any, res
 	return true
 }
 
-// readCreatedRepository fetches the created repository data
+// readCreatedRepository fetches the repository data immediately after create.
+// The 10 s middleware delay covers normal HA propagation; we retry twice with
+// a 1 s pause as a backstop for nodes still under load.
 func (r *repositoryResource) readCreatedRepository(ctx context.Context, plan interface{}, respDiags *diag.Diagnostics, respState *tfsdk.State) (interface{}, bool) {
-	apiResponse, httpResponse, err := r.RepositoryFormat.DoReadRequest(plan, r.Client, ctx)
-	if err != nil {
-		r.handleCreateReadError(ctx, httpResponse, err, respDiags, respState)
-		return nil, false
+	maxAttempts := 1
+	if r.NodeCount > 1 {
+		maxAttempts = 2
 	}
-	return apiResponse, true
+
+	var (
+		apiResponse  interface{}
+		httpResponse *http.Response
+		err          error
+	)
+
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		apiResponse, httpResponse, err = r.RepositoryFormat.DoReadRequest(plan, r.Services.Repository, ctx)
+		if err == nil && apiResponse != nil {
+			return apiResponse, true
+		}
+		if attempt < maxAttempts-1 {
+			tflog.Info(ctx, fmt.Sprintf("HA: repository not yet visible after create, retrying (%d/%d)", attempt+1, maxAttempts))
+			time.Sleep(1 * time.Second)
+		}
+	}
+
+	if err == nil {
+		err = fmt.Errorf("repository not yet visible after create")
+	}
+	r.handleCreateReadError(ctx, httpResponse, err, respDiags, respState)
+	return nil, false
 }
 
 // handleCreateReadError handles errors from the read operation after create
 func (r *repositoryResource) handleCreateReadError(ctx context.Context, httpResponse *http.Response, err error, respDiags *diag.Diagnostics, respState *tfsdk.State) {
-	if httpResponse.StatusCode == http.StatusNotFound {
+	if httpResponse != nil && httpResponse.StatusCode == http.StatusNotFound {
 		respState.RemoveResource(ctx)
 		errors.HandleAPIWarning(
 			fmt.Sprintf(REPOSITORY_ERROR_DID_NOT_EXIST, r.RepositoryType.String(), r.RepositoryFormat.Key(), "read"),
@@ -211,6 +281,15 @@ func (r *repositoryResource) handleCreateReadError(ctx context.Context, httpResp
 // isProxyWithFirewall checks if this is a proxy repository supporting firewall
 func (r *repositoryResource) isProxyWithFirewall() bool {
 	return r.RepositoryType == format.REPO_TYPE_PROXY && r.RepositoryFormat.SupportsRepositoryFirewall()
+}
+
+// usesCapabilityBasedFirewall reports whether firewall configuration for this
+// Nexus Repository Manager version must go through the Capability API. NXRM 3.94+
+// instead sets firewall mode inline on the repository payload itself (see
+// format.ComputeFirewallMode), so none of the Capability-based orchestration below
+// applies there.
+func (r *repositoryResource) usesCapabilityBasedFirewall() bool {
+	return r.NxrmVersion.SupportsCapabilities() && !r.NxrmVersion.SupportsInlineFirewall()
 }
 
 // configureFirewall handles firewall capability configuration for proxy repositories
@@ -279,14 +358,10 @@ func (r *repositoryResource) Read(ctx context.Context, req resource.ReadRequest,
 	}
 
 	// Set API Context
-	ctx = context.WithValue(
-		ctx,
-		sonatyperepo.ContextBasicAuth,
-		r.Auth,
-	)
+	ctx = r.AuthContext(ctx)
 
 	// Make API Request
-	apiResponse, httpResponse, err := r.RepositoryFormat.DoReadRequest(stateModel, r.Client, ctx)
+	apiResponse, httpResponse, err := r.RepositoryFormat.DoReadRequest(stateModel, r.Services.Repository, ctx)
 
 	// Handle any errors
 	if err != nil {
@@ -327,20 +402,25 @@ func (r *repositoryResource) Update(ctx context.Context, req resource.UpdateRequ
 	resp.Diagnostics.Append(diags...)
 
 	// Setup context with auth
-	ctx = r.setupAuthContext(ctx)
+	ctx = r.AuthContext(ctx)
+
+	// Build an API-safe copy of the plan that omits http_client.connection when the
+	// user's config left it unset, so we don't send computed defaults to NXRM as if
+	// they were explicitly configured. State is still populated from the original plan.
+	apiPlanModel := suppressUnconfiguredConnectionFromConfig(ctx, planModel, req.Config)
 
 	// Verify IQ connection if needed for firewall
-	if r.NxrmVersion.SupportsCapabilities() && !r.verifyIQConnectionIfNeeded(ctx, planModel, &resp.Diagnostics) {
+	if r.usesCapabilityBasedFirewall() && !r.verifyIQConnectionIfNeeded(ctx, apiPlanModel, &resp.Diagnostics) {
 		return
 	}
 
 	// Update the repository
-	if !r.updateRepository(ctx, planModel, stateModel, &resp.Diagnostics) {
+	if !r.updateRepository(ctx, apiPlanModel, stateModel, &resp.Diagnostics) {
 		return
 	}
 
 	// Fetch complete data
-	apiResponse, ok := r.readCreatedRepository(ctx, planModel, &resp.Diagnostics, &resp.State)
+	apiResponse, ok := r.readCreatedRepository(ctx, apiPlanModel, &resp.Diagnostics, &resp.State)
 	if !ok {
 		return
 	}
@@ -353,8 +433,8 @@ func (r *repositoryResource) Update(ctx context.Context, req resource.UpdateRequ
 	stateModel = r.RepositoryFormat.UpdatePlanForState(stateModel)
 
 	// Configure firewall if needed
-	if r.NxrmVersion.SupportsCapabilities() && r.isProxyWithFirewall() {
-		stateModel = r.configureFirewall(ctx, planModel, stateModel, &resp.Diagnostics, &resp.State)
+	if r.usesCapabilityBasedFirewall() && r.isProxyWithFirewall() {
+		stateModel = r.configureFirewall(ctx, apiPlanModel, stateModel, &resp.Diagnostics, &resp.State)
 		if resp.Diagnostics.HasError() {
 			return
 		}
@@ -366,7 +446,7 @@ func (r *repositoryResource) Update(ctx context.Context, req resource.UpdateRequ
 
 func (r *repositoryResource) updateRepository(ctx context.Context, planModel, stateModel any, respDiags *diag.Diagnostics) bool {
 	// Make API requet
-	httpResponse, err := r.RepositoryFormat.DoUpdateRequest(planModel, stateModel, r.Client, ctx)
+	httpResponse, err := r.RepositoryFormat.DoUpdateRequest(planModel, stateModel, r.Services.Repository, ctx)
 
 	// Handle any errors
 	if err != nil {
@@ -377,10 +457,13 @@ func (r *repositoryResource) updateRepository(ctx context.Context, planModel, st
 				httpResponse,
 				respDiags,
 			)
-			return false
 		} else {
+			// Any non-404 failure (e.g. a 400 from NXRM's own request validation) is not a
+			// "repository did not exist" condition - report it as a plain update failure so
+			// the diagnostic title doesn't misdirect from the actual server-reported reason,
+			// which HandleAPIError still appends in full (see GH-491).
 			errors.HandleAPIError(
-				fmt.Sprintf(REPOSITORY_ERROR_DID_NOT_EXIST, r.RepositoryType.String(), r.RepositoryFormat.Key(), "update"),
+				fmt.Sprintf(REPOSITORY_ERROR_UPDATE_FAILED, r.RepositoryFormat.Key(), r.RepositoryType.String()),
 				&err,
 				httpResponse,
 				respDiags,
@@ -403,11 +486,7 @@ func (r *repositoryResource) Delete(ctx context.Context, req resource.DeleteRequ
 	}
 
 	// Request Context
-	ctx = context.WithValue(
-		ctx,
-		sonatyperepo.ContextBasicAuth,
-		r.Auth,
-	)
+	ctx = r.AuthContext(ctx)
 
 	// Make API request
 	repoNameStructField := reflect.Indirect(reflect.ValueOf(state)).FieldByName("Name").Interface()
@@ -438,7 +517,7 @@ func (r *repositoryResource) Delete(ctx context.Context, req resource.DeleteRequ
 func (r *repositoryResource) attemptDeleteWithRetries(ctx context.Context, repositoryName string, resp *resource.DeleteResponse) bool {
 	maxAttempts := 3
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		httpResponse, err := r.RepositoryFormat.DoDeleteRequest(repositoryName, r.Client, ctx)
+		httpResponse, err := r.RepositoryFormat.DoDeleteRequest(repositoryName, r.Services.Repository, ctx)
 
 		// Trap 500 Error as they occur when Repo is not in appropriate internal state
 		if httpResponse.StatusCode == http.StatusInternalServerError {
@@ -484,14 +563,10 @@ func (r *repositoryResource) ImportState(ctx context.Context, req resource.Impor
 	repositoryName := req.ID
 
 	// Set API Context
-	ctx = context.WithValue(
-		ctx,
-		sonatyperepo.ContextBasicAuth,
-		r.Auth,
-	)
+	ctx = r.AuthContext(ctx)
 
 	// Call format-specific import request to fetch repository data from API
-	apiResponse, httpResponse, err := r.RepositoryFormat.DoImportRequest(repositoryName, r.Client, ctx)
+	apiResponse, httpResponse, err := r.RepositoryFormat.DoImportRequest(repositoryName, r.Services.Repository, ctx)
 
 	// Handle errors
 	if err != nil {
@@ -530,7 +605,7 @@ func (r *repositoryResource) ImportState(ctx context.Context, req resource.Impor
 	stateModel = r.RepositoryFormat.UpdatePlanForState(stateModel)
 
 	// If PROXY that Supports Repository Firewall - check for any existing Capability
-	if r.NxrmVersion.SupportsCapabilities() && r.RepositoryType == format.REPO_TYPE_PROXY && r.RepositoryFormat.SupportsRepositoryFirewall() {
+	if r.usesCapabilityBasedFirewall() && r.RepositoryType == format.REPO_TYPE_PROXY && r.RepositoryFormat.SupportsRepositoryFirewall() {
 		// See if Capability alread exists
 		capabilityHelper := capability.NewCapabilityHelper(r.Client, common.CAPABILITY_TYPE_FIREWALL_AUDIT_QUARANTINE)
 		auditAndQuarantineCapability := capabilityHelper.FindCapabilityByRepositoryId(ctx, r.RepositoryFormat.GetRepositoryId(stateModel), &resp.Diagnostics)
@@ -570,10 +645,11 @@ func standardRepositorySchema(repoFormat string, repoType format.RepositoryType,
 		)
 	}
 
-	// LatestPolicy is only for Docker Hosted Repositories
-	if repoFormat == common.REPO_FORMAT_DOCKER && repoType == format.REPO_TYPE_HOSTED {
+	// LatestPolicy is only for Docker and OCI Hosted Repositories -- both reuse the same
+	// DockerHostedStorageAttributes API shape (see model.dockerHostedStorageModel).
+	if (repoFormat == common.REPO_FORMAT_DOCKER || repoFormat == common.REPO_FORMAT_OCI) && repoType == format.REPO_TYPE_HOSTED {
 		storageAttributes["latest_policy"] = schema.ResourceOptionalBoolWithDefault(
-			`Whether to allow redeploying the 'latest' tag but defer to the Deployment Policy for all other tags. Only applicable for Hosted Docker Repositories when Deployment Policy is set to Disable.
+			`Whether to allow redeploying the 'latest' tag but defer to the Deployment Policy for all other tags. Only applicable for Hosted Docker/OCI Repositories when Deployment Policy is set to Disable.
 
   **NOTE:** The APIs for Sonatype Nexus Repository do not currently allow for reading this value - hence during import this may result in terraform plan changes as we defualt to false.`,
 			false,

@@ -24,6 +24,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	tfschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setdefault"
@@ -153,7 +154,7 @@ func (r *systemConfigHttpResource) Read(ctx context.Context, req resource.ReadRe
 
 	// Call API to Create
 	ctx = r.AuthContext(ctx)
-	apiResponse, httpResponse, err := r.Client.ManageSonatypeHTTPSystemSettingsAPI.GetHttpSettings(ctx).Execute()
+	apiResponse, httpResponse, err := r.Services.HttpSettings.GetHttpSettings(ctx)
 
 	// Handle any errors
 	if err != nil {
@@ -200,7 +201,7 @@ func (r *systemConfigHttpResource) Update(ctx context.Context, req resource.Upda
 func (r *systemConfigHttpResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	// Call API to Create
 	ctx = r.AuthContext(ctx)
-	httpResponse, err := r.Client.ManageSonatypeHTTPSystemSettingsAPI.ResetHttpSettings(ctx).Execute()
+	httpResponse, err := r.Services.HttpSettings.ResetHttpSettings(ctx)
 
 	// Handle Error
 	if err != nil {
@@ -224,12 +225,30 @@ func (r *systemConfigHttpResource) Delete(ctx context.Context, req resource.Dele
 	resp.State.RemoveResource(ctx)
 }
 
+// ImportState imports the resource into Terraform state.
+func (r *systemConfigHttpResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// Since this is a singleton resource (system http configuration),
+	// we don't need to validate the ID - any non-empty string is acceptable
+	if req.ID == "" {
+		resp.Diagnostics.AddError(
+			"Invalid Import ID",
+			"Import ID cannot be empty. Use any non-empty string (e.g., 'system-http-config') to import the system HTTP configuration.",
+		)
+		return
+	}
+
+	// Set the ID to a fixed value since this is a singleton resource
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("last_updated"), types.StringValue(time.Now().Format(time.RFC850)))...)
+
+	tflog.Info(ctx, fmt.Sprintf("Imported system HTTP configuration with ID: %s", req.ID))
+}
+
 func (r *systemConfigHttpResource) updateHttpSettings(ctx context.Context, plan *model.HttpConfigurationModel, respDiags *diag.Diagnostics, respState *tfsdk.State) {
 	// Call API to Create
 	ctx = r.AuthContext(ctx)
 	httpSettings := v3.NewHttpSettingsXoWithDefaults()
 	plan.MapToApi(httpSettings)
-	httpResponse, err := r.Client.ManageSonatypeHTTPSystemSettingsAPI.UpdateHttpSettings(ctx).Body(*httpSettings).Execute()
+	httpResponse, err := r.Services.HttpSettings.UpdateHttpSettings(ctx, *httpSettings)
 
 	// Handle Errors
 	if err != nil {
@@ -252,7 +271,7 @@ func (r *systemConfigHttpResource) updateHttpSettings(ctx context.Context, plan 
 	}
 
 	// Read Data back from API
-	apiResponse, httpResponse, err := r.Client.ManageSonatypeHTTPSystemSettingsAPI.GetHttpSettings(ctx).Execute()
+	apiResponse, httpResponse, err := r.Services.HttpSettings.GetHttpSettings(ctx)
 
 	// Handle any errors
 	if err != nil {

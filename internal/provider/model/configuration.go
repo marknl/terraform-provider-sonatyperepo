@@ -17,6 +17,7 @@
 package model
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"terraform-provider-sonatyperepo/internal/provider/common"
@@ -26,6 +27,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	sonatyperepo "github.com/sonatype-nexus-community/nexus-repo-api-client-go/v3"
+	sonatyperepoV395 "github.com/sonatype-nexus-community/nexus-repo-api-client-go/v395"
 )
 
 type AnonymousAccessModel struct {
@@ -123,6 +125,91 @@ func (m *SecuritySamlModel) MapFromApi(api *sonatyperepo.SamlConfigurationXO) {
 	m.ValidateAssertionSignature = types.BoolPointerValue(api.ValidateAssertionSignature)
 }
 
+// SecurityOAuth2Model
+// ------------------------------------------
+type SecurityOAuth2Model struct {
+	IdpJwsAlgorithm           types.String `tfsdk:"idp_jws_algorithm"`
+	UsernameClaim             types.String `tfsdk:"username_claim"`
+	ClientId                  types.String `tfsdk:"client_id"`
+	ClientSecret              types.String `tfsdk:"client_secret"`
+	IdpAuthorizationUrl       types.String `tfsdk:"idp_authorization_url"`
+	IdpTokenUrl               types.String `tfsdk:"idp_token_url"`
+	IdpLogoutUrl              types.String `tfsdk:"idp_logout_url"`
+	IdpJwksUrl                types.String `tfsdk:"idp_jwks_url"`
+	IdpJwks                   types.String `tfsdk:"idp_jwks"`
+	FirstNameClaim            types.String `tfsdk:"first_name_claim"`
+	LastNameClaim             types.String `tfsdk:"last_name_claim"`
+	EmailClaim                types.String `tfsdk:"email_claim"`
+	GroupsClaim               types.String `tfsdk:"groups_claim"`
+	UseTrustStore             types.Bool   `tfsdk:"use_trust_store"`
+	AuthorizationCustomParams types.Map    `tfsdk:"authorization_custom_params"`
+	TokenRequestCustomParams  types.Map    `tfsdk:"token_request_custom_params"`
+	ExactMatchClaims          types.Map    `tfsdk:"exact_match_claims"`
+	LastUpdated               types.String `tfsdk:"last_updated"`
+}
+
+// MapFromApi maps API response to model. ClientSecret is deliberately never touched -- the
+// API never returns it, so whatever is already in state/plan is left as-is (same convention
+// as LdapServerModel.AuthPassword and IqConnectionModel.Password).
+func (m *SecurityOAuth2Model) MapFromApi(api *sonatyperepoV395.OAuth2OidcConfigurationXO) {
+	m.IdpJwsAlgorithm = types.StringValue(api.IdpJwsAlgorithm)
+	m.UsernameClaim = types.StringValue(api.UsernameClaim)
+	m.ClientId = types.StringPointerValue(api.ClientId)
+	m.IdpAuthorizationUrl = types.StringPointerValue(api.IdpAuthorizationUrl)
+	m.IdpTokenUrl = types.StringPointerValue(api.IdpTokenUrl)
+	m.IdpLogoutUrl = types.StringPointerValue(api.IdpLogoutUrl)
+	m.IdpJwksUrl = types.StringPointerValue(api.IdpJwksUrl)
+	m.IdpJwks = types.StringPointerValue(api.IdpJwks)
+	m.FirstNameClaim = types.StringPointerValue(api.FirstNameClaim)
+	m.LastNameClaim = types.StringPointerValue(api.LastNameClaim)
+	m.EmailClaim = types.StringPointerValue(api.EmailClaim)
+	m.GroupsClaim = types.StringPointerValue(api.GroupsClaim)
+	m.UseTrustStore = types.BoolPointerValue(api.UseTrustStore)
+	m.AuthorizationCustomParams = stringMapPtrToMapValue(api.AuthorizationCustomParams)
+	m.TokenRequestCustomParams = stringMapPtrToMapValue(api.TokenRequestCustomParams)
+	m.ExactMatchClaims = stringMapPtrToMapValue(api.ExactMatchClaims)
+}
+
+// MapToApi maps model to API request payload.
+func (m *SecurityOAuth2Model) MapToApi(api *sonatyperepoV395.OAuth2OidcConfigurationXO) {
+	api.IdpJwsAlgorithm = m.IdpJwsAlgorithm.ValueString()
+	api.UsernameClaim = m.UsernameClaim.ValueString()
+	api.ClientId = m.ClientId.ValueStringPointer()
+	api.ClientSecret = m.ClientSecret.ValueStringPointer()
+	api.IdpAuthorizationUrl = m.IdpAuthorizationUrl.ValueStringPointer()
+	api.IdpTokenUrl = m.IdpTokenUrl.ValueStringPointer()
+	api.IdpLogoutUrl = m.IdpLogoutUrl.ValueStringPointer()
+	api.IdpJwksUrl = m.IdpJwksUrl.ValueStringPointer()
+	api.IdpJwks = m.IdpJwks.ValueStringPointer()
+	api.FirstNameClaim = m.FirstNameClaim.ValueStringPointer()
+	api.LastNameClaim = m.LastNameClaim.ValueStringPointer()
+	api.EmailClaim = m.EmailClaim.ValueStringPointer()
+	api.GroupsClaim = m.GroupsClaim.ValueStringPointer()
+	api.UseTrustStore = m.UseTrustStore.ValueBoolPointer()
+	api.AuthorizationCustomParams = mapValueToStringMapPtr(m.AuthorizationCustomParams)
+	api.TokenRequestCustomParams = mapValueToStringMapPtr(m.TokenRequestCustomParams)
+	api.ExactMatchClaims = mapValueToStringMapPtr(m.ExactMatchClaims)
+}
+
+// stringMapPtrToMapValue converts an optional API map[string]string into a Terraform Map value.
+func stringMapPtrToMapValue(m *map[string]string) types.Map {
+	if m == nil {
+		return types.MapNull(types.StringType)
+	}
+	v, _ := types.MapValueFrom(context.Background(), types.StringType, *m)
+	return v
+}
+
+// mapValueToStringMapPtr converts a Terraform Map value into an optional API map[string]string.
+func mapValueToStringMapPtr(m types.Map) *map[string]string {
+	if m.IsNull() || m.IsUnknown() {
+		return nil
+	}
+	goMap := make(map[string]string, len(m.Elements()))
+	m.ElementsAs(context.Background(), &goMap, false)
+	return &goMap
+}
+
 func (m *IqConnectionModel) MapFromApi(api *sonatyperepo.IqConnectionXo) {
 	m.AuthenticationMethod = types.StringValue(api.AuthenticationType)
 	m.Enabled = types.BoolPointerValue(api.Enabled)
@@ -131,7 +218,11 @@ func (m *IqConnectionModel) MapFromApi(api *sonatyperepo.IqConnectionXo) {
 	m.Username = types.StringPointerValue(api.Username)
 	// Skip password
 	m.ConnectionTimeout = types.Int32PointerValue(api.TimeoutSeconds)
-	m.Properties = types.StringValue(strings.TrimSuffix(*api.Properties, "\n"))
+	properties := ""
+	if api.Properties != nil { // Can be nil during import
+		properties = strings.TrimSuffix(*api.Properties, "\n")
+	}
+	m.Properties = types.StringValue(properties)
 	m.ShowIQServerLink = types.BoolPointerValue(api.ShowLink)
 	m.FailOpenModeEnabled = types.BoolPointerValue(api.FailOpenModeEnabled)
 }
@@ -146,6 +237,7 @@ func (m *IqConnectionModel) MapToApi(api *sonatyperepo.IqConnectionXo) {
 	api.Properties = m.Properties.ValueStringPointer()
 	api.ShowLink = m.ShowIQServerLink.ValueBoolPointer()
 	api.FailOpenModeEnabled = m.FailOpenModeEnabled.ValueBoolPointer()
+	api.UseTrustStoreForUrl = m.NexusTrustStoreEnabled.ValueBoolPointer()
 }
 
 // LdapServerModel
@@ -370,8 +462,8 @@ func (m *ProxySettingsModel) MapToApi(api *sonatyperepo.ProxySettingsXo) {
 	api.Enabled = m.Enabled.ValueBool()
 	api.Host = m.Host.ValueString()
 	api.Port = util.Int32ToString(m.Port.ValueInt32())
-	api.AuthInfo = *sonatyperepo.NewAuthSettingsXoWithDefaults()
 	if m.Authentication != nil {
+		api.AuthInfo = *sonatyperepo.NewAuthSettingsXoWithDefaults()
 		m.Authentication.MapToApi(&api.AuthInfo)
 	}
 }
@@ -387,19 +479,21 @@ func (m *ProxySettingsModel) MapFromApi(api *sonatyperepo.ProxySettingsXo) {
 	if m.Authentication == nil {
 		m.Authentication = &ProxyAuthSettingsModel{}
 	}
-	m.Authentication.MapFromApi(&api.AuthInfo)
+	if api.AuthInfo.GetUsername() != "" {
+		m.Authentication.MapFromApi(&api.AuthInfo)
+	}
 }
 
 // HttpConfigurationModel
 // ------------------------------------------
 type HttpConfigurationModel struct {
-	HttpProxy     ProxySettingsModel `tfsdk:"http_proxy"`
-	HttpsProxy    ProxySettingsModel `tfsdk:"https_proxy"`
-	NonProxyHosts []types.String     `tfsdk:"non_proxy_hosts"`
-	Retries       types.Int32        `tfsdk:"retries"`
-	Timeout       types.Int32        `tfsdk:"timeout"`
-	UserAgent     types.String       `tfsdk:"user_agent"`
-	LastUpdated   types.String       `tfsdk:"last_updated"`
+	HttpProxy     *ProxySettingsModel `tfsdk:"http_proxy"`
+	HttpsProxy    *ProxySettingsModel `tfsdk:"https_proxy"`
+	NonProxyHosts []types.String      `tfsdk:"non_proxy_hosts"`
+	Retries       types.Int32         `tfsdk:"retries"`
+	Timeout       types.Int32         `tfsdk:"timeout"`
+	UserAgent     types.String        `tfsdk:"user_agent"`
+	LastUpdated   types.String        `tfsdk:"last_updated"`
 }
 
 func (m *HttpConfigurationModel) MapToApi(api *sonatyperepo.HttpSettingsXo) {
@@ -427,10 +521,22 @@ func (m *HttpConfigurationModel) MapToApi(api *sonatyperepo.HttpSettingsXo) {
 
 func (m *HttpConfigurationModel) MapFromApi(api *sonatyperepo.HttpSettingsXo) {
 	if api.HttpProxy.IsSet() && api.HttpProxy.Get() != nil {
-		m.HttpProxy.MapFromApi(api.HttpProxy.Get())
+		httpProxy := api.HttpProxy.Get()
+		if httpProxy.GetHost() != "" && httpProxy.GetPort() != "" {
+			if m.HttpProxy == nil {
+				m.HttpProxy = &ProxySettingsModel{}
+			}
+			m.HttpProxy.MapFromApi(api.HttpProxy.Get())
+		}
 	}
 	if api.HttpsProxy.IsSet() && api.HttpsProxy.Get() != nil {
-		m.HttpsProxy.MapFromApi(api.HttpsProxy.Get())
+		httpsProxy := api.HttpsProxy.Get()
+		if httpsProxy.GetHost() != "" && httpsProxy.GetPort() != "" {
+			if m.HttpsProxy == nil {
+				m.HttpsProxy = &ProxySettingsModel{}
+			}
+			m.HttpsProxy.MapFromApi(api.HttpsProxy.Get())
+		}
 	}
 	m.NonProxyHosts = make([]types.String, len(api.NonProxyHosts))
 	for i, host := range api.NonProxyHosts {

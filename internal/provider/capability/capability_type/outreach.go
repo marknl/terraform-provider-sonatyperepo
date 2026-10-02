@@ -52,21 +52,21 @@ func NewOutreachCapability() *OutreachCapability {
 // --------------------------------------------
 // Capabiltiy Type: Outreach Functions
 // --------------------------------------------
-func (f *OutreachCapability) DoCreateRequest(plan any, apiClient *v3.APIClient, ctx context.Context, version common.SystemVersion) (*v3.CapabilityDTO, *http.Response, error) {
+func (f *OutreachCapability) DoCreateRequest(plan any, svc common.CapabilityService, ctx context.Context, version common.SystemVersion) (*v3.CapabilityDTO, *http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.CapabilityCoreOutreachModel)
 
 	// Call API to Create
-	return apiClient.CapabilitiesAPI.Create3(ctx).Body(*planModel.ToApiCreateModel(version)).Execute()
+	return svc.Create(ctx, *planModel.ToApiCreateModel(version))
 }
 
-func (f *OutreachCapability) DoUpdateRequest(plan any, capabilityId string, apiClient *v3.APIClient, ctx context.Context, version common.SystemVersion) (*http.Response, error) {
+func (f *OutreachCapability) DoUpdateRequest(plan any, capabilityId string, svc common.CapabilityService, ctx context.Context, version common.SystemVersion) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.CapabilityCoreOutreachModel)
 	planModel.Id = types.StringValue(capabilityId)
 
 	// Call API to Update
-	return apiClient.CapabilitiesAPI.Update3(ctx, capabilityId).Body(*planModel.ToApiUpdateModel(version)).Execute()
+	return svc.Update(ctx, capabilityId, *planModel.ToApiUpdateModel(version))
 }
 
 func (f *OutreachCapability) PlanAsModel(ctx context.Context, plan tfsdk.Plan) (any, diag.Diagnostics) {
@@ -78,8 +78,8 @@ func (f *OutreachCapability) PropertiesSchema() map[string]tfschema.Attribute {
 	return map[string]tfschema.Attribute{
 		"override_url": schema.ResourceOptionalStringWithRegex(
 			"Override external URL for downloading new Outreach content.",
-			regexp.MustCompile(`^https?://[^\s]+$`),
-			"Must be a valid http:// or https:// URL",
+			regexp.MustCompile(`^(https?://[^\s]+|)$`),
+			"Must be a valid http:// or https:// URL or empty string.",
 		),
 		"always_remote": schema.ResourceOptionalBoolWithDefault(
 			"Always check the remote server for updates.",
@@ -101,7 +101,10 @@ func (f *OutreachCapability) UpdatePlanForState(plan any) any {
 
 func (f *OutreachCapability) UpdateStateFromApi(state any, api any) any {
 	stateModel := (state).(model.CapabilityCoreOutreachModel)
-	apiModel := (api).(*v3.CapabilityDTO)
+	apiModel, ok := (api).(*v3.CapabilityDTO)
+	if !ok || apiModel == nil {
+		return state
+	}
 	stateModel.FromApiModel(apiModel)
 	stateModel.LastUpdated = types.StringValue(time.Now().Format(time.RFC850))
 	return stateModel

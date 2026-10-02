@@ -94,12 +94,14 @@ type RepositoryYumProxyModel struct {
 
 func (m *RepositoryYumProxyModel) MapMissingApiFieldsFromPlan(planModel RepositoryYumProxyModel) {
 	m.HttpClient.MapMissingApiFieldsFromPlan(planModel.HttpClient)
+	// YUM signing fields are not returned by the GET API; preserve from plan
+	m.Yum = planModel.Yum
 }
 
-func (m *RepositoryYumProxyModel) FromApiModel(api sonatyperepo.SimpleApiProxyRepository) {
-	m.Name = types.StringPointerValue(api.Name)
+func (m *RepositoryYumProxyModel) FromApiModel(api sonatyperepo.YumProxyApiRepository) {
+	m.Name = types.StringValue(api.Name)
 	m.Online = types.BoolValue(api.Online)
-	m.Url = types.StringPointerValue(api.Url)
+	m.Url = types.StringValue(api.Url)
 
 	// Cleanup
 	if api.Cleanup != nil && len(api.Cleanup.PolicyNames) > 0 {
@@ -140,7 +142,6 @@ func (m *RepositoryYumProxyModel) ToApiCreateModel() sonatyperepo.YumProxyReposi
 		Proxy:         sonatyperepo.ProxyAttributes{},
 		NegativeCache: sonatyperepo.NegativeCacheAttributes{},
 		HttpClient:    sonatyperepo.HttpClientAttributes{},
-		YumSigning:    &sonatyperepo.YumSigningRepositoriesAttributes{},
 	}
 	m.Storage.MapToApi(&apiModel.Storage)
 
@@ -162,6 +163,7 @@ func (m *RepositoryYumProxyModel) ToApiCreateModel() sonatyperepo.YumProxyReposi
 
 	// YUM Specific
 	if m.Yum != nil {
+		apiModel.YumSigning = &sonatyperepo.YumSigningRepositoriesAttributes{}
 		m.Yum.MapToApi(apiModel.YumSigning)
 	}
 
@@ -179,10 +181,15 @@ type RepositoryYumGroupModel struct {
 	Yum *yumSigningModel `tfsdk:"yum"`
 }
 
-func (m *RepositoryYumGroupModel) FromApiModel(api sonatyperepo.SimpleApiGroupRepository) {
-	m.Name = types.StringPointerValue(api.Name)
+func (m *RepositoryYumGroupModel) MapMissingApiFieldsFromPlan(planModel RepositoryYumGroupModel) {
+	// YUM signing fields are not returned by the GET API; preserve from plan
+	m.Yum = planModel.Yum
+}
+
+func (m *RepositoryYumGroupModel) FromApiModel(api sonatyperepo.YumGroupApiRepository) {
+	m.Name = types.StringValue(api.Name)
 	m.Online = types.BoolValue(api.Online)
-	m.Url = types.StringPointerValue(api.Url)
+	m.Url = types.StringValue(api.Url)
 
 	// Storage
 	m.Storage.MapFromApi(&api.Storage)
@@ -196,16 +203,16 @@ func (m *RepositoryYumGroupModel) FromApiModel(api sonatyperepo.SimpleApiGroupRe
 
 func (m *RepositoryYumGroupModel) ToApiCreateModel() sonatyperepo.YumGroupRepositoryApiRequest {
 	apiModel := sonatyperepo.YumGroupRepositoryApiRequest{
-		Name:       m.Name.ValueString(),
-		Online:     m.Online.ValueBool(),
-		Storage:    sonatyperepo.StorageAttributes{},
-		YumSigning: sonatyperepo.NewYumSigningRepositoriesAttributesWithDefaults(),
+		Name:    m.Name.ValueString(),
+		Online:  m.Online.ValueBool(),
+		Storage: sonatyperepo.StorageAttributes{},
 	}
 	m.Storage.MapToApi(&apiModel.Storage)
 	m.Group.MapToApi(&apiModel.Group)
 
 	// YUM
 	if m.Yum != nil {
+		apiModel.YumSigning = &sonatyperepo.YumSigningRepositoriesAttributes{}
 		m.Yum.MapToApi(apiModel.YumSigning)
 	}
 

@@ -2,7 +2,268 @@
 
 ## UNRELEASED
 
-_TBC_
+*tbc*
+
+## 1.19.2 Sep 25, 2026
+
+BUG FIXES:
+* Prevent a permanent `+ preemptive = false` phantom diff (and, if forced through, a `400` from Sonatype Nexus Repository) after `terraform import` of a proxy repository with `http_client.authentication` configured [GH-493] - `terraform import` builds state directly from the API response with no prior Plan/State to carry `preemptive` forward from (unlike Create/Update, fixed for the same underlying reason by GH-489/GH-491), so it was left `null` while the schema's own `false` default reappeared on every subsequent plan. Nexus's API only supports `preemptive` for `sonatyperepo_repository_maven2_proxy`/`sonatyperepo_repository_pypi_proxy`/`sonatyperepo_repository_terraform_proxy`; it has no such field at all for every other proxy format, silently ignoring any value sent for it - so `preemptive` is now also marked deprecated in the schema for those other proxy repository formats
+
+## 1.19.1 Sep 22, 2026
+
+BUG FIXES:
+* `repository_firewall` now correctly hydrates from the live inline `firewall.mode` on `terraform import`/`plan`/`apply` against Sonatype Nexus Repository 3.94.0+ for `sonatyperepo_repository_raw_proxy` [GH-487] - required upgrading to `nexus-repo-api-client-go` v395.96.2, which fixed a missing `firewall` field on `RawProxyApiRepository` in the generated client
+* Prevent `Provider produced inconsistent result after apply` error when `http_client.authentication` is configured without explicitly setting `preemptive` [GH-489] - `http_client.connection`/`authentication` were pointer fields shared by aliasing between the Terraform Plan and the derived state model, so mapping the API response onto state silently overwrote the Plan's values that the provider relies on to restore `password`/`bearer_token`/`preemptive`, which the API never (or inconsistently) returns; also fixes an unstable `preemptive` diff on every subsequent `plan` once omitted from config. This affected every proxy repository format with `http_client.authentication`: `sonatyperepo_repository_alpine_proxy`, `sonatyperepo_repository_ansiblegalaxy_proxy`, `sonatyperepo_repository_apt_proxy`, `sonatyperepo_repository_cargo_proxy`, `sonatyperepo_repository_cocoapods_proxy`, `sonatyperepo_repository_composer_proxy`, `sonatyperepo_repository_conan_proxy`, `sonatyperepo_repository_conda_proxy`, `sonatyperepo_repository_docker_proxy`, `sonatyperepo_repository_go_proxy`, `sonatyperepo_repository_helm_proxy`, `sonatyperepo_repository_huggingface_proxy`, `sonatyperepo_repository_maven2_proxy`, `sonatyperepo_repository_npm_proxy`, `sonatyperepo_repository_nuget_proxy`, `sonatyperepo_repository_oci_proxy`, `sonatyperepo_repository_p2_proxy`, `sonatyperepo_repository_pub_proxy`, `sonatyperepo_repository_pypi_proxy`, `sonatyperepo_repository_r_proxy`, `sonatyperepo_repository_raw_proxy`, `sonatyperepo_repository_rubygems_proxy`, `sonatyperepo_repository_swift_proxy`, `sonatyperepo_repository_terraform_proxy` and `sonatyperepo_repository_yum_proxy` resources
+* Prevent `<format> proxy Repository did not exist to update` error (masking a 400 from Sonatype Nexus Repository) when `http_client.authentication` is configured outside of Terraform (e.g. manually in the Nexus UI) on a repository with `lifecycle { ignore_changes = [http_client.authentication] }` set, then an unrelated attribute is changed [GH-491] - the provider only ever restores `password`/`bearer_token` from the Terraform Plan, which has no value to restore when authentication isn't managed by Terraform at all; sending the resulting object through anyway (with a `type` but no secret) was rejected by Nexus's own validation with `password must not be null` / `bearerToken must not be null`, surfaced by the provider as a misleading "did not exist" error instead of the actual cause. The provider now omits `http_client.authentication` from the update request entirely whenever it is missing the secret required for its `type`, matching the request Nexus already accepts when the attribute is left unset, and reconciles state to match. This affected the same set of proxy repository formats as GH-489 above. Also makes the update error message itself accurate for any non-404 failure (previously every error from an update, regardless of actual HTTP status, was reported with the same "did not exist" wording)
+
+NOTES:
+* Dependency updates
+
+## 1.19.0 Sep 11, 2026
+
+ENHANCEMENTS:
+* Added support for the `repository.purge-unused` ("Repository - Delete unused components") Task, which is the only API-managed way to evict unused proxied content on Sonatype Nexus Repository Community Edition, as that edition exposes no REST API for Cleanup Policies [GH-125]
+  * **New Resource:** `sonatyperepo_task_repository_purge_unused`
+* Added support for Sonatype Nexus Repository 3.96.x, alongside continued support for pre-3.96.0 versions [GH-482]
+
+NOTES:
+* Tested against [Sonatype Nexus Repository Manager 3.96.0](https://help.sonatype.com/en/sonatype-nexus-repository-3-96-0-release-notes.html) [GH-482] - required upgrading to `nexus-repo-api-client-go` v395.96.1, as v395.96.0 shipped without the OAuth2/OIDC configuration API used by `sonatyperepo_security_oauth2`
+* Dependency updates
+
+## 1.18.1 Sep 09, 2026
+
+BUG FIXES:
+* Prevent `Provider produced inconsistent result after apply` error when `allowed_domains`/`allowed_ips` are omitted from config on initial `terraform apply` for `sonatyperepo_security_ssrf_protection` [GH-476] - `Create` was reading from the raw config instead of the plan, so the schema's empty-set default never made it into state
+* `sonatyperepo_cleanup_policy` rejected valid `format = "oci"` values [GH-483] - the `format` enum was never updated when the OCI and Pub repository formats were added, so `pub` was also missing and has been added alongside `oci`
+
+## 1.18.0 Sep 07, 2026
+
+ENHANCEMENTS:
+* Added support for OCI (Open Container Initiative) repository format [GH-456]
+  * **New Resource:** `sonatyperepo_repository_oci_hosted`
+  * **New Resource:** `sonatyperepo_repository_oci_proxy`
+  * **New Resource:** `sonatyperepo_repository_oci_group`
+
+BUG FIXES:
+* Prevent `Provider produced inconsistent result after apply` error when `repository_firewall.enabled = false` is explicitly configured against Sonatype Nexus Repository 3.94.0+ [GH-469] - this affected every proxy repository format supporting `repository_firewall`, not just NPM as originally reported: `sonatyperepo_repository_alpine_proxy`, `sonatyperepo_repository_cargo_proxy`, `sonatyperepo_repository_cocoapods_proxy`, `sonatyperepo_repository_composer_proxy`, `sonatyperepo_repository_conan_proxy`, `sonatyperepo_repository_conda_proxy`, `sonatyperepo_repository_docker_proxy`, `sonatyperepo_repository_go_proxy`, `sonatyperepo_repository_huggingface_proxy`, `sonatyperepo_repository_maven2_proxy`, `sonatyperepo_repository_npm_proxy`, `sonatyperepo_repository_nuget_proxy`, `sonatyperepo_repository_pub_proxy`, `sonatyperepo_repository_pypi_proxy`, `sonatyperepo_repository_r_proxy`, `sonatyperepo_repository_raw_proxy`, `sonatyperepo_repository_rubygems_proxy` and `sonatyperepo_repository_yum_proxy` resources
+* `actions = ["ALL"]` is no longer rejected by validation as documented [GH-475] - the shared schema validator only allowed explicit BREAD values (`ADD`, `BROWSE`, `DELETE`, `EDIT`, `READ`), affecting `sonatyperepo_privilege_repository_view`, `sonatyperepo_privilege_repository_admin` and `sonatyperepo_privilege_repository_content_selector` resources
+
+NOTES:
+* OCI repositories require Sonatype Nexus Repository 3.94.0 or later
+* Acceptance Testing now includes Sonatype IQ Server [GH-285]
+* Known issue: `repository_firewall` on `sonatyperepo_repository_composer_proxy` does not survive a refresh against Sonatype Nexus Repository 3.94.0+ [GH-471]
+
+## 1.17.0 Aug 25, 2026
+
+ENHANCEMENTS:
+* Added support for Pub (Dart/Flutter) repository format [GH-452]
+  * **New Resource:** `sonatyperepo_repository_pub_hosted`
+  * **New Resource:** `sonatyperepo_repository_pub_proxy`
+  * **New Resource:** `sonatyperepo_repository_pub_group`
+
+NOTES:
+* Pub repositories require Sonatype Nexus Repository 3.92.0 or later
+
+## 1.16.2 Aug 20, 2026
+
+BUG FIXES:
+* `repository_firewall` now correctly hydrates from the live inline `firewall.mode` on `terraform import`/`plan`/`apply` against Sonatype Nexus Repository 3.94.0+ for `sonatyperepo_repository_pypi_proxy` [GH-466] - required upgrading to `nexus-repo-api-client-go` v395.95.3, which fixed a missing `firewall` field on `PyPiProxyApiRepository` in the generated client
+
+## 1.16.1 Aug 20, 2026
+
+BUG FIXES:
+* Prevent `Provider produced inconsistent result after apply` error when configuring `repository_firewall` against Sonatype Nexus Repository 3.94.0+ for `sonatyperepo_repository_raw_proxy`, `sonatyperepo_repository_maven2_proxy`, `sonatyperepo_repository_nuget_proxy`, `sonatyperepo_repository_conan_proxy`, `sonatyperepo_repository_conda_proxy` and `sonatyperepo_repository_rubygems_proxy` resources [GH-461]
+* `repository_firewall` now correctly hydrates from the live inline `firewall.mode` on `terraform import`/`plan`/`apply` against Sonatype Nexus Repository 3.94.0+ for `sonatyperepo_repository_yum_proxy` and `sonatyperepo_repository_cocoapods_proxy` resources [GH-464]
+
+## 1.16.0 Aug 19, 2026
+
+ENHANCEMENTS:
+* Added support for managing OAuth2 / OpenID Connect (OIDC) authentication [GH-446]
+  * **New Resource:** `sonatyperepo_security_oauth2`
+
+NOTES:
+* `sonatyperepo_security_oauth2` requires Sonatype Nexus Repository Pro 3.94.0 or later - the underlying API is not available against older versions, even though the OAuth2/OIDC feature itself was introduced in the UI earlier
+
+## 1.15.0 Aug 18, 2026
+
+ENHANCEMENTS:
+* Added support for Sonatype Nexus Repository 3.94.x and 3.95.x, alongside continued support for pre-3.94.0 versions [GH-449], [GH-445]
+
+BUG FIXES:
+* `maven.layout_policy` and `maven.version_policy` on `sonatyperepo_repository_maven_hosted`/`sonatyperepo_repository_maven_proxy` are now `Required` (previously `Optional`) - Sonatype Nexus Repository rejects requests where these are omitted
+* `alpine.key_pair` on `sonatyperepo_repository_alpine_hosted`/`sonatyperepo_repository_alpine_proxy`/`sonatyperepo_repository_alpine_group` is now `Required` (previously `Optional`) - Sonatype Nexus Repository rejects requests where this is omitted or empty
+* `yum.deploy_policy` on `sonatyperepo_repository_yum_hosted` now defaults to `STRICT` when not specified, matching the Sonatype Nexus Repository UI default
+
+NOTES:
+* Documented the approach provided by @marknl when using this provider against a HA Cluster with >1 active notes [GH-453]
+* Tested against [Sonatype Nexus Repository Manager 3.95.1](https://help.sonatype.com/en/sonatype-nexus-repository-3-92-0-release-notes.html) [GH-449]
+* Tested against [Sonatype Nexus Repository Manager 3.94.0](https://help.sonatype.com/en/sonatype-nexus-repository-3-92-0-release-notes.html) [GH-445]
+* Dependency updates
+
+## 1.14.0 Aug 05, 2026
+
+ENHANCEMENTS:
+* Added support for managing SSRF Protection settings [GH-447]
+  * **New Resource:** `sonatyperepo_security_ssrf_protection`
+
+## 1.13.0 Jul 08, 2026
+
+ENHANCEMENTS:
+* Added support for Alpine repository format [GH-416]
+  * **New Resource:** `sonatyperepo_repository_alpine_hosted`
+  * **New Resource:** `sonatyperepo_repository_alpine_proxy`
+  * **New Resource:** `sonatyperepo_repository_alpine_group`
+
+## 1.12.1 Jul 07, 2026
+
+BUG FIXES:
+* Prevent `invalid result object after apply` error for `key_pair` on `sonatyperepo_repository_yum_proxy`/`sonatyperepo_repository_yum_group` resources [GH-440]
+
+## 1.12.0 Jul 01, 2026
+
+ENHANCEMENTS:
+* Added support for Helm Group repository [GH-437]
+  * **New Resource:** `sonatyperepo_repository_helm_group`
+
+BUG FIXES:
+* Prevent `inconsistent values` error for `sonatyperepo_repository_yum_*` resources [GH-436]
+
+## 1.11.0 Jun 19, 2026
+
+ENHANCEMENTS:
+* Added support for Go Hosted repositories [GH-419]
+  * **New Resource:** `sonatyperepo_repository_go_hosted`
+* Added support for Swift Group repositories [GH-418]
+  * **New Resource:** `sonatyperepo_repository_swift_group`
+
+NOTES:
+* Docuemnted the environment variables that can be used to configure this provider [GH-421]
+* Documented the privileges required in Sonatype Nexus Repository to use this provider [GH-424]
+
+## 1.10.0 Jun 17, 2026
+
+ENHANCEMENTS:
+* Added support for managing Ansible Galaxy repositories - [GH-417] - thanks @JoooostB:
+  * **New Resource:** `sonatyperepo_repository_ansiblegalaxy_hosted` 
+  * **New Resource:** `sonatyperepo_repository_ansiblegalaxy_proxy`
+  * **New Resource:** `sonatyperepo_repository_ansiblegalaxy_group`
+
+BUG FIXES:
+* Documentation corrected for all `sonatyperepo_repository_*_proxy` resources re. `http_client.connection` [GH-420]
+
+NOTES:
+* Only run acceptance tests against Sonatype Nexus Repository versions not yet in Extended Maintenance [GH-425]
+* Tested against Terraform 1.15.x [GH-423]
+* Tested against [Sonatype Nexus Repository Manager 3.93.0](https://help.sonatype.com/en/sonatype-nexus-repository-3-93-0-release-notes.html) [GH-422]
+
+## 1.9.1 Jun 16, 2026
+
+BUG FIXES:
+* Resolved inconsistent values after apply when using Bearer Token auth for Proxy Repositories [GH-413]
+
+## 1.9.0 May 28, 2026
+
+ENHANCEMENTS:
+* A notable change has been implemented that applies **only** when running this provider against a Sonatype Nexus Repository HA Cluster with `> 1` active nodes [GH-391], [GH-363]
+ 
+  **Background**
+
+  In multi-node High Availability (HA) deployments of Sonatype Nexus Repository, write operations (POST, PUT, DELETE) are committed to a shared database. Individual nodes read these events and can exhibit a short lag before serving the updated state on subsequent reads.
+  
+  This has caused Terraform to report spurious drift, "resource not found" errors, or plan inconsistencies during complex apply cycles where resources are created and immediately read back.
+
+  The provider uses a default `cluster_stabilisation_delay_ms` value of 10,000ms (10 seconds) which is validated and safe to cover all real world deployments of Sonatype Nexus Repository. The default (10s) is intentionally conservative. Most clusters will converge faster; reduce the value if your cluster is lower-latency.
+
+* Related to the above, specific handling has been added to cover `sonatyperepo_capability_*` when running this provider against a Sonatype Nexus Repository HA Cluster
+
+BUG FIXES:
+- The above enhancements are expected to resolve the following bugs:
+  - [GH-393]
+  - [GH-407]
+  - [GH-408]
+
+## 1.8.2 May 28, 2026
+
+BUG FIXES:
+* Support `*` for `format` on `sonatyperepo_cleanup_policy` resource [GH-406]
+
+NOTES:
+* Dependency updates
+
+## 1.8.1 May 15, 2026
+
+BUG FIXES:
+* `frequency.start_date` was `int32` and not `int64` for Task Resources [GH-405] 
+
+## 1.8.0 May 13, 2026
+
+ENHANCEMENTS:
+* Resource `sonatyperepo_system_iq_connection` now supports `terraform import`
+
+NOTES:
+* Tested against [Sonatype Nexus Repository Manager 3.92.0](https://help.sonatype.com/en/sonatype-nexus-repository-3-92-0-release-notes.html) [GH-400]
+
+## 1.7.2 May 05, 2026
+
+BUG FIXES:
+* Attempting to update `apt_signing.passphrase` on resource `sonatyperepo_repository_apt_hosted` caused `Error: Provider produced inconsistent result after apply` [GH-397] 
+
+## 1.7.1 April 30, 2026
+
+BUG FIXES:
+* Implemented missing READ functionality for resources `sonatype_task_*` which allows `terraform import` to now work [GH-394] - thanks to @HazemElAgaty
+
+## 1.7.0 April 20, 2026
+
+ENHANCEMENTS:
+* **New Data Source:** `sonatyperepo_blob_store_acs` [GH-378]
+* **New Resource:** `sonatyperepo_blob_store_acs` [GH-378]
+
+BUG FIXES:
+* Empty `override_url` is now acceptable for `sonatyperepo_capability_outreach_management` [GH-375]
+
+## 1.6.0 April 15, 2026
+
+ENHANCEMENTS:
+* Resource `sonatyperepo_blob_store_s3` now supports `terraform import` [GH-374]
+* Resource `sonatyperepo_system_config_http` now support `terraform import` [GH-376]
+
+BUG FIXES:
+* `softQuota` was never applied for resource `sonatyperepo_blob_store_s3` [GH-381]
+* Acceptance Tests running against HA Cluster were not spreading requests across Cluster Nodes in CI [GH-370], [GH-385]
+
+NOTES:
+* Tested against [Sonatype Nexus Repository Manager 3.91.0](https://help.sonatype.com/en/sonatype-nexus-repository-3-91-0-release-notes.html) [GH-379]
+* **Given the fixes related to Acceptance Testing included in this release we are aware that there can be issues using this Provider against NXRM HA Clusters - this is being tracked in [GH-386]**
+
+## 1.5.0 April 07, 2026
+
+ENHANCEMENTS:
+* **New Resource:** `sonatyperepo_repository_terraform_group` [GH-372]
+* **New Resource:** `sonatyperepo_security_ssl_truststore` [GH-362] - thanks to @HazemElAgaty
+* The following resources now support `terraform import` [GH-368]:
+  * `sonatyperepo_privilege_application` 
+  * `sonatyperepo_privilege_repository_admin`
+  * `sonatyperepo_privilege_repository_content_selector`
+  * `sonatyperepo_privilege_repository_view`
+  * `sonatyperepo_privilege_wildcard`
+
+BUG FIXES:
+* Setting `nexus_trust_store_enabled` on `sonatyperepo_system_iq_connection` resource had no effect [GH-365] - thanks to @gcroucher
+
+## 1.4.0 March 27, 2026
+
+ENHANCEMENTS:
+* `sonatyperepo_repository_terraform_hosted` has had `component` property removed as Terraform Hosted repositories do not support Proprietary Components
+* Documentation updates provided by @marknl [GH-347]
+* Dependencies have been updated to avoid newly disclosed CVEs [GH-354]
+
+BUG FIXES:
+* Prevent provider crash when using `sonatyperepo_blob_store_s3` resource [GH-349]
+* `sonatyperepo_system_config_http` regression when running against NXRM 3.90 [GH-359]
+
+NOTES:
+* Tested against [Sonatype Nexus Repository Manager 3.90.1](https://help.sonatype.com/en/sonatype-nexus-repository-3-90-0-release-notes.html) [GH-295], [GH-352]
 
 ## 1.3.0 March 02, 2026
 

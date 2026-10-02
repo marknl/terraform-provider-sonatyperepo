@@ -18,17 +18,17 @@ package tasktype
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"terraform-provider-sonatyperepo/internal/provider/common"
 	"terraform-provider-sonatyperepo/internal/provider/model"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	tfschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-
-	v3 "github.com/sonatype-nexus-community/nexus-repo-api-client-go/v3"
 
 	"github.com/sonatype-nexus-community/terraform-provider-shared/schema"
 )
@@ -52,15 +52,15 @@ func NewRepositoryDockerGcTask() *RepositoryDockerGcTask {
 // --------------------------------------------
 // Docker Repository GC Format Functions
 // --------------------------------------------
-func (f *RepositoryDockerGcTask) DoCreateRequest(plan any, apiClient *v3.APIClient, ctx context.Context, version common.SystemVersion) (*v3.TaskXO, *http.Response, error) {
+func (f *RepositoryDockerGcTask) DoCreateRequest(plan any, taskService common.TaskService, ctx context.Context, version common.SystemVersion) (*common.TaskApiModel, *http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.TaskRepositoryDockerGcModel)
 
 	// Call API to Create
-	return apiClient.TasksAPI.CreateTask(ctx).Body(*planModel.ToApiCreateModel(version)).Execute()
+	return taskService.CreateTask(ctx, planModel.ToApiCreateModel(version))
 }
 
-func (f *RepositoryDockerGcTask) DoUpdateRequest(plan any, state any, apiClient *v3.APIClient, ctx context.Context, version common.SystemVersion) (*http.Response, error) {
+func (f *RepositoryDockerGcTask) DoUpdateRequest(plan any, state any, taskService common.TaskService, ctx context.Context, version common.SystemVersion) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.TaskRepositoryDockerGcModel)
 
@@ -68,7 +68,7 @@ func (f *RepositoryDockerGcTask) DoUpdateRequest(plan any, state any, apiClient 
 	stateModel := (state).(model.TaskRepositoryDockerGcModel)
 
 	// Call API to Update
-	return apiClient.TasksAPI.UpdateTask(ctx, stateModel.Id.ValueString()).Body(*planModel.ToApiUpdateModel(version)).Execute()
+	return taskService.UpdateTask(ctx, stateModel.Id.ValueString(), planModel.ToApiUpdateModel(version))
 }
 
 func (f *RepositoryDockerGcTask) PlanAsModel(ctx context.Context, plan tfsdk.Plan) (any, diag.Diagnostics) {
@@ -99,8 +99,8 @@ func (f *RepositoryDockerGcTask) UpdatePlanForState(plan any) any {
 
 func (f *RepositoryDockerGcTask) UpdateStateFromApi(state any, api any) any {
 	stateModel := (state).(model.TaskRepositoryDockerGcModel)
-	apiModel := (api).(v3.TaskXO)
-	stateModel.Id = types.StringPointerValue(apiModel.Id)
+	apiModel := (api).(common.TaskApiModel)
+	stateModel.MapFromApi(&apiModel)
 	return stateModel
 }
 
@@ -133,15 +133,15 @@ func NewRepositoryDockerUploadPurgeTaskTask() *RepositoryDockerUploadPurgeTask {
 // --------------------------------------------
 // Docker Repository GC Format Functions
 // --------------------------------------------
-func (f *RepositoryDockerUploadPurgeTask) DoCreateRequest(plan any, apiClient *v3.APIClient, ctx context.Context, version common.SystemVersion) (*v3.TaskXO, *http.Response, error) {
+func (f *RepositoryDockerUploadPurgeTask) DoCreateRequest(plan any, taskService common.TaskService, ctx context.Context, version common.SystemVersion) (*common.TaskApiModel, *http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.TaskRepositoryDockerUploadPurgeModel)
 
 	// Call API to Create
-	return apiClient.TasksAPI.CreateTask(ctx).Body(*planModel.ToApiCreateModel(version)).Execute()
+	return taskService.CreateTask(ctx, planModel.ToApiCreateModel(version))
 }
 
-func (f *RepositoryDockerUploadPurgeTask) DoUpdateRequest(plan any, state any, apiClient *v3.APIClient, ctx context.Context, version common.SystemVersion) (*http.Response, error) {
+func (f *RepositoryDockerUploadPurgeTask) DoUpdateRequest(plan any, state any, taskService common.TaskService, ctx context.Context, version common.SystemVersion) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.TaskRepositoryDockerUploadPurgeModel)
 
@@ -149,7 +149,7 @@ func (f *RepositoryDockerUploadPurgeTask) DoUpdateRequest(plan any, state any, a
 	stateModel := (state).(model.TaskRepositoryDockerUploadPurgeModel)
 
 	// Call API to Update
-	return apiClient.TasksAPI.UpdateTask(ctx, stateModel.Id.ValueString()).Body(*planModel.ToApiUpdateModel(version)).Execute()
+	return taskService.UpdateTask(ctx, stateModel.Id.ValueString(), planModel.ToApiUpdateModel(version))
 }
 
 func (f *RepositoryDockerUploadPurgeTask) PlanAsModel(ctx context.Context, plan tfsdk.Plan) (any, diag.Diagnostics) {
@@ -179,8 +179,8 @@ func (f *RepositoryDockerUploadPurgeTask) UpdatePlanForState(plan any) any {
 
 func (f *RepositoryDockerUploadPurgeTask) UpdateStateFromApi(state any, api any) any {
 	stateModel := (state).(model.TaskRepositoryDockerUploadPurgeModel)
-	apiModel := (api).(v3.TaskXO)
-	stateModel.Id = types.StringPointerValue(apiModel.Id)
+	apiModel := (api).(common.TaskApiModel)
+	stateModel.MapFromApi(&apiModel)
 	return stateModel
 }
 
@@ -213,15 +213,15 @@ func NewRepositoryMavenRemoveSnapshotsTask() *RepositoryMavenRemoveSnapshotsTask
 // --------------------------------------------
 // Maven Repository Remove Snapshots Functions
 // --------------------------------------------
-func (f *RepositoryMavenRemoveSnapshotsTask) DoCreateRequest(plan any, apiClient *v3.APIClient, ctx context.Context, version common.SystemVersion) (*v3.TaskXO, *http.Response, error) {
+func (f *RepositoryMavenRemoveSnapshotsTask) DoCreateRequest(plan any, taskService common.TaskService, ctx context.Context, version common.SystemVersion) (*common.TaskApiModel, *http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.TaskRepositoryMavenRemoveSnapshotsModel)
 
 	// Call API to Create
-	return apiClient.TasksAPI.CreateTask(ctx).Body(*planModel.ToApiCreateModel(version)).Execute()
+	return taskService.CreateTask(ctx, planModel.ToApiCreateModel(version))
 }
 
-func (f *RepositoryMavenRemoveSnapshotsTask) DoUpdateRequest(plan any, state any, apiClient *v3.APIClient, ctx context.Context, version common.SystemVersion) (*http.Response, error) {
+func (f *RepositoryMavenRemoveSnapshotsTask) DoUpdateRequest(plan any, state any, taskService common.TaskService, ctx context.Context, version common.SystemVersion) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.TaskRepositoryMavenRemoveSnapshotsModel)
 
@@ -229,7 +229,7 @@ func (f *RepositoryMavenRemoveSnapshotsTask) DoUpdateRequest(plan any, state any
 	stateModel := (state).(model.TaskRepositoryMavenRemoveSnapshotsModel)
 
 	// Call API to Update
-	return apiClient.TasksAPI.UpdateTask(ctx, stateModel.Id.ValueString()).Body(*planModel.ToApiUpdateModel(version)).Execute()
+	return taskService.UpdateTask(ctx, stateModel.Id.ValueString(), planModel.ToApiUpdateModel(version))
 }
 
 func (f *RepositoryMavenRemoveSnapshotsTask) PlanAsModel(ctx context.Context, plan tfsdk.Plan) (any, diag.Diagnostics) {
@@ -271,14 +271,104 @@ func (f *RepositoryMavenRemoveSnapshotsTask) UpdatePlanForState(plan any) any {
 
 func (f *RepositoryMavenRemoveSnapshotsTask) UpdateStateFromApi(state any, api any) any {
 	stateModel := (state).(model.TaskRepositoryMavenRemoveSnapshotsModel)
-	apiModel := (api).(v3.TaskXO)
-	stateModel.Id = types.StringPointerValue(apiModel.Id)
+	apiModel := (api).(common.TaskApiModel)
+	stateModel.MapFromApi(&apiModel)
 	return stateModel
 }
 
 func (f *RepositoryMavenRemoveSnapshotsTask) UpdateStateFromPlanForUpdate(plan any, state any) any {
 	planModel := (plan).(model.TaskRepositoryMavenRemoveSnapshotsModel)
 	stateModel := (state).(model.TaskRepositoryMavenRemoveSnapshotsModel)
+
+	planModel.Id = stateModel.Id
+	planModel.LastUpdated = types.StringValue(time.Now().Format(time.RFC850))
+
+	return planModel
+}
+
+// --------------------------------------------
+// Repository Purge Unused
+// --------------------------------------------
+type RepositoryPurgeUnusedTask struct {
+	BaseTaskType
+}
+
+func NewRepositoryPurgeUnusedTask() *RepositoryPurgeUnusedTask {
+	return &RepositoryPurgeUnusedTask{
+		BaseTaskType: BaseTaskType{
+			publicName: "Repository - Delete unused components",
+			taskType:   common.TASK_TYPE_REPOSITORY_PURGE_UNUSED,
+		},
+	}
+}
+
+// --------------------------------------------
+// Repository Purge Unused Functions
+// --------------------------------------------
+func (f *RepositoryPurgeUnusedTask) DoCreateRequest(plan any, taskService common.TaskService, ctx context.Context, version common.SystemVersion) (*common.TaskApiModel, *http.Response, error) {
+	// Cast to correct Plan Model Type
+	planModel := (plan).(model.TaskRepositoryPurgeUnusedModel)
+
+	// Call API to Create
+	return taskService.CreateTask(ctx, planModel.ToApiCreateModel(version))
+}
+
+func (f *RepositoryPurgeUnusedTask) DoUpdateRequest(plan any, state any, taskService common.TaskService, ctx context.Context, version common.SystemVersion) (*http.Response, error) {
+	// Cast to correct Plan Model Type
+	planModel := (plan).(model.TaskRepositoryPurgeUnusedModel)
+
+	// Cast to correct State Model Type
+	stateModel := (state).(model.TaskRepositoryPurgeUnusedModel)
+
+	// Call API to Update
+	return taskService.UpdateTask(ctx, stateModel.Id.ValueString(), planModel.ToApiUpdateModel(version))
+}
+
+func (f *RepositoryPurgeUnusedTask) MarkdownDescription() string {
+	return fmt.Sprintf(
+		`Manage Task '%s' (%s)
+
+Sonatype Nexus Repository Community Edition exposes no REST API for Cleanup Policies, making this Task the only API-managed way to evict unused proxied content on that edition.`,
+		f.PublicName(), f.Type().String(),
+	)
+}
+
+func (f *RepositoryPurgeUnusedTask) PlanAsModel(ctx context.Context, plan tfsdk.Plan) (any, diag.Diagnostics) {
+	var planModel model.TaskRepositoryPurgeUnusedModel
+	return planModel, plan.Get(ctx, &planModel)
+}
+
+func (f *RepositoryPurgeUnusedTask) PropertiesSchema() map[string]tfschema.Attribute {
+	return map[string]tfschema.Attribute{
+		"repository_name": schema.ResourceRequiredString(`The repository to delete unused components from. Use "*" for all repositories.`),
+		"last_used": schema.ResourceRequiredInt64WithValidators(
+			`Purge components and assets that were last used more than this number of days ago.`,
+			int64validator.AtLeast(1),
+		),
+	}
+}
+
+func (f *RepositoryPurgeUnusedTask) StateAsModel(ctx context.Context, state tfsdk.State) (any, diag.Diagnostics) {
+	var stateModel model.TaskRepositoryPurgeUnusedModel
+	return stateModel, state.Get(ctx, &stateModel)
+}
+
+func (f *RepositoryPurgeUnusedTask) UpdatePlanForState(plan any) any {
+	var planModel = (plan).(model.TaskRepositoryPurgeUnusedModel)
+	planModel.LastUpdated = types.StringValue(time.Now().Format(time.RFC850))
+	return planModel
+}
+
+func (f *RepositoryPurgeUnusedTask) UpdateStateFromApi(state any, api any) any {
+	stateModel := (state).(model.TaskRepositoryPurgeUnusedModel)
+	apiModel := (api).(common.TaskApiModel)
+	stateModel.MapFromApi(&apiModel)
+	return stateModel
+}
+
+func (f *RepositoryPurgeUnusedTask) UpdateStateFromPlanForUpdate(plan any, state any) any {
+	planModel := (plan).(model.TaskRepositoryPurgeUnusedModel)
+	stateModel := (state).(model.TaskRepositoryPurgeUnusedModel)
 
 	planModel.Id = stateModel.Id
 	planModel.LastUpdated = types.StringValue(time.Now().Format(time.RFC850))

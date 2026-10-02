@@ -25,10 +25,11 @@ env:
     LC_APPLICATION_ID: terraform-provider-sonatyperepo
     NEXUS_SECURITY_RANDOMPASSWORD: "false"
     INSTALL4J_ADD_VM_PARAMS: "-Dnexus.licenseFile=${{ github.workspace }}/license.lic"
-
-# Testing only needs permissions to read the repository contents.
-permissions:
-    contents: read
+    # See https://github.com/sonatype-nexus-community/terraform-provider-sonatyperepo/issues/285.
+    # Single pinned Sonatype IQ Server release - one instance is sufficient even here, since IQ
+    # Server itself isn't under HA test, only NXRM is. See test-trusted.yml for why this specific
+    # version was chosen (the newest one confirmed to actually resolve as a downloadable bundle).
+    NXIQ_VERSION: "1.204.2-01"
 
 jobs:
     
@@ -37,14 +38,18 @@ jobs:
         if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.ref_name != 'main' && github.event.workflow_run.head_repository.full_name == github.repository) }}
         name: Acc. Tests (NXRM HA ${{ matrix.nxrm }} + TF ${{ matrix.terraform }})
         runs-on: ubuntu-latest
-        timeout-minutes: 15
+        timeout-minutes: 120
+        permissions:
+          contents: read
         strategy:
             fail-fast: false
             matrix:
                 nxrm:
-                    - '3.89.1-02' # LATEST
+                    - '3.89.1-02' # First version tested HA against
+                    - '3.96.0-09' # LATEST
                 terraform:
-                    - '1.14.*' # Latest
+                    # - '1.14.*'
+                    - '1.15.*' # Latest
         steps:
             - name: Set Clean TF Version
               run: |
@@ -53,7 +58,7 @@ jobs:
                 echo "TF_SAFE_VERSION=$TF_SAFE_VERSION" >> "$GITHUB_ENV"
                 
             - name: Checkout Source
-              uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493 # v5
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
               with:
                 ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.branch || github.ref }}
 
@@ -63,6 +68,13 @@ jobs:
               with:
                 postgres-version: 17
             
+            - name: Increase PostgreSQL max_connections
+              run: |
+                psql -c "ALTER SYSTEM SET max_connections = 600;"
+                pg_ctl restart -D "$RUNNER_TEMP/pgdata"
+              env:
+                PGSERVICE: ${{ steps.setup-postgresql.outputs.service-name }}
+
             - name: Create database
               run: |
                 psql -c "CREATE USER nexus WITH PASSWORD 'somepassword';"
@@ -70,6 +82,17 @@ jobs:
                 psql -d nexus -c "CREATE SCHEMA nexus AUTHORIZATION nexus;"
                 psql -d nexus -c "GRANT ALL PRIVILEGES ON DATABASE nexus TO nexus; GRANT ALL PRIVILEGES ON SCHEMA nexus TO nexus;"
                 psql -d nexus -c "CREATE EXTENSION pg_trgm SCHEMA nexus;"
+              env:
+                PGSERVICE: ${{ steps.setup-postgresql.outputs.service-name }}
+
+            - name: Create Sonatype IQ Server database
+              # NXRM 204.2+ licenses that include SBOM Manager refuse to install against IQ
+              # Server's default embedded H2 database ("SBOM Manager feature requires use of an
+              # external database") - see
+              # https://help.sonatype.com/en/external-database-configuration.html.
+              run: |
+                psql -c "CREATE USER iqserver WITH PASSWORD 'somepassword';"
+                psql -c "CREATE DATABASE clm OWNER iqserver ENCODING 'UTF8' LC_COLLATE = 'en_US.UTF-8' LC_CTYPE = 'en_US.UTF-8' TEMPLATE template0;"
               env:
                 PGSERVICE: ${{ steps.setup-postgresql.outputs.service-name }}
 
@@ -97,9 +120,81 @@ jobs:
                 echo "nexus.datastore.clustered.enabled = true" > ${{ github.workspace }}/node-03/sonatype-work/nexus3/etc/nexus.properties
                 echo "application-port=8082" >> ${{ github.workspace }}/node-02/sonatype-work/nexus3/etc/nexus.properties
                 echo "application-port=8083" >> ${{ github.workspace }}/node-03/sonatype-work/nexus3/etc/nexus.properties
+                echo "nexus.security.oauth2.enabled=true" >> ${{ github.workspace }}/node-01/sonatype-work/nexus3/etc/nexus.properties
+                echo "nexus.security.oauth2.enabled=true" >> ${{ github.workspace }}/node-02/sonatype-work/nexus3/etc/nexus.properties
+                echo "nexus.security.oauth2.enabled=true" >> ${{ github.workspace }}/node-03/sonatype-work/nexus3/etc/nexus.properties
+                echo "nexus.jwt.enabled=true" >> ${{ github.workspace }}/node-01/sonatype-work/nexus3/etc/nexus.properties
+                echo "nexus.jwt.enabled=true" >> ${{ github.workspace }}/node-02/sonatype-work/nexus3/etc/nexus.properties
+                echo "nexus.jwt.enabled=true" >> ${{ github.workspace }}/node-03/sonatype-work/nexus3/etc/nexus.properties
                 cp ${{ github.workspace }}/nexus-store.properties ${{ github.workspace }}/node-01/sonatype-work/nexus3/etc/fabric/nexus-store.properties
                 cp ${{ github.workspace }}/nexus-store.properties ${{ github.workspace }}/node-02/sonatype-work/nexus3/etc/fabric/nexus-store.properties
                 cp ${{ github.workspace }}/nexus-store.properties ${{ github.workspace }}/node-03/sonatype-work/nexus3/etc/fabric/nexus-store.properties
+
+            - name: Download & Unpack Sonatype IQ Server
+              run: |
+                  wget --max-redirect=0 https://download.sonatype.com/clm/server/nexus-iq-server-${{ env.NXIQ_VERSION }}-bundle.tar.gz
+                  mkdir ${{ github.workspace }}/nxiq
+                  tar xvz -f nexus-iq-server-${{ env.NXIQ_VERSION }}-bundle.tar.gz -C ${{ github.workspace }}/nxiq
+                  echo "licenseFile: ${{ github.workspace }}/license.lic" >> ${{ github.workspace }}/nxiq/config.yml
+                  echo "database:" >> ${{ github.workspace }}/nxiq/config.yml
+                  echo "  type: postgresql" >> ${{ github.workspace }}/nxiq/config.yml
+                  echo "  hostname: localhost" >> ${{ github.workspace }}/nxiq/config.yml
+                  echo "  port: 5432" >> ${{ github.workspace }}/nxiq/config.yml
+                  echo "  name: clm" >> ${{ github.workspace }}/nxiq/config.yml
+                  echo "  username: iqserver" >> ${{ github.workspace }}/nxiq/config.yml
+                  echo "  password: somepassword" >> ${{ github.workspace }}/nxiq/config.yml
+
+            - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+              with:
+                distribution: 'temurin'
+                java-version: '25'
+
+            - name: Start Sonatype IQ Server
+              run: |
+                  # Use the bundle's own jvm.options (via @jvm.options) rather than a hand-copied
+                  # flag list, since Sonatype adds/changes required flags between releases (e.g.
+                  # --enable-native-access, needed from JDK 22+ per JEP 472, isn't in older
+                  # copies of this list). See
+                  # https://help.sonatype.com/en/java-compatibility-matrix.html - IQ Server 204+
+                  # requires Java 25.
+                  java @jvm.options -jar nexus-iq-server-*.jar server config.yml 2> stderr.log &
+              working-directory: "${{ github.workspace }}/nxiq"
+
+            - name: Wait for Sonatype IQ Server to be ready
+              run: |
+                  set +e
+                  sleep 20
+                  READY=false
+                  for i in {1..60}; do
+                    STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8071/healthcheck?pretty=true")
+                    CURL_EXIT=$?
+
+                    echo "CURL Exit Code: $CURL_EXIT"
+
+                    if [ "$CURL_EXIT" -eq 0 ]; then
+                      if [ "$STATUS" -eq 200 ]; then
+                          echo "✅ Received 200 OK from http://localhost:8071/healthcheck?pretty=true"
+                          READY=true
+                          break
+                      else
+                          echo "⏳ Waiting for 200 OK... Current status: $STATUS for http://localhost:8071/healthcheck?pretty=true"
+                          sleep 10
+                      fi
+                    else
+                      echo "⚠️ curl returned unexpected exit code $CURL_EXIT. Retrying... (attempt $i/60)"
+                      sleep 10
+                    fi
+                  done
+                  if [ "$READY" != "true" ]; then
+                    echo "❌ Sonatype IQ Server failed to become ready after 60 attempts - dumping diagnostics:"
+                    echo "--- nxiq directory ---"
+                    ls -la "${{ github.workspace }}/nxiq"
+                    echo "--- stderr.log ---"
+                    cat "${{ github.workspace }}/nxiq/stderr.log" 2>&1 || echo "(no stderr.log)"
+                    echo "--- clm-server.log (tail) ---"
+                    tail -n 200 "${{ github.workspace }}/nxiq/log/clm-server.log" 2>&1 || echo "(no clm-server.log)"
+                    exit 1
+                  fi
 
             - name: Create directories for shared storage
               run: |
@@ -113,6 +208,7 @@ jobs:
               run: |
                   set +e
                   sleep 20
+                  READY=false
                   for i in {1..5}; do
                     STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8081/service/rest/v1/status")
                     CURL_EXIT=$?
@@ -122,6 +218,7 @@ jobs:
                     if [ "$CURL_EXIT" -eq 0 ]; then
                       if [ "$STATUS" -eq 200 ]; then
                           echo "✅ Received 200 OK from http://localhost:8081/service/rest/v1/status"
+                          READY=true
                           break
                       else
                           echo "⏳ Waiting for 200 OK... Current status: $STATUS for http://localhost:8081/service/rest/v1/status"
@@ -132,6 +229,10 @@ jobs:
                       sleep 5
                     fi
                   done
+                  if [ "$READY" != "true" ]; then                           
+                    echo "❌ Node 1 failed to become ready after 5 attempts"
+                    exit 1                                                  
+                  fi  
 
             - name: Start Sonatype Nexus Repository Manager (Node 2)
               run: ./nexus start
@@ -141,6 +242,7 @@ jobs:
               run: |
                   set +e
                   sleep 20
+                  READY=false
                   for i in {1..5}; do
                     STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8082/service/rest/v1/status")
                     CURL_EXIT=$?
@@ -150,6 +252,7 @@ jobs:
                     if [ "$CURL_EXIT" -eq 0 ]; then
                       if [ "$STATUS" -eq 200 ]; then
                           echo "✅ Received 200 OK from http://localhost:8082/service/rest/v1/status"
+                          READY=true
                           break
                       else
                           echo "⏳ Waiting for 200 OK... Current status: $STATUS for http://localhost:8082/service/rest/v1/status"
@@ -160,6 +263,10 @@ jobs:
                       sleep 5
                     fi
                   done
+                  if [ "$READY" != "true" ]; then                           
+                    echo "❌ Node 2 failed to become ready after 5 attempts"
+                    exit 1                                                  
+                  fi  
 
             - name: Start Sonatype Nexus Repository Manager (Node 3)
               run: ./nexus start
@@ -169,6 +276,7 @@ jobs:
               run: |
                   set +e
                   sleep 20
+                  READY=false
                   for i in {1..5}; do
                     STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8083/service/rest/v1/status")
                     CURL_EXIT=$?
@@ -178,6 +286,7 @@ jobs:
                     if [ "$CURL_EXIT" -eq 0 ]; then
                       if [ "$STATUS" -eq 200 ]; then
                           echo "✅ Received 200 OK from http://localhost:8083/service/rest/v1/status"
+                          READY=true
                           break
                       else
                           echo "⏳ Waiting for 200 OK... Current status: $STATUS for http://localhost:8083/service/rest/v1/status"
@@ -188,46 +297,120 @@ jobs:
                       sleep 5
                     fi
                   done
+                  if [ "$READY" != "true" ]; then                           
+                    echo "❌ Node 3 failed to become ready after 5 attempts"
+                    exit 1                                                  
+                  fi 
 
-            - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6
+            - name: Install & configure nginx load balancer
+              run: |
+                CONF_FILE="/etc/nginx/nginx.conf"
+                FORMAT_STRING="    log_format backend_tracking '\$remote_addr - \$remote_user [\$time_local] '
+                                '\"\$request\" \$status \$body_bytes_sent '
+                                '\"\$http_referer\" \"\$http_user_agent\" '
+                                'upstream: \$upstream_addr status: \$upstream_status '
+                                'rt: \$upstream_response_time';"
+                sudo apt-get install -y nginx
+
+                # Update Access Log Format
+                # Use a HEREDOC to create a temporary snippet, then inject it.
+                # This avoids all the 'sed' escaping nightmares.
+                cat <<EOF > /tmp/nginx_format.conf
+                $FORMAT_STRING
+                EOF
+
+                # Inject the file content after 'http {'
+                sudo sed -i "/http {/r /tmp/nginx_format.conf" "$CONF_FILE"
+
+                # Now run your access_log replacement (using a regex to be safer)
+                sudo sed -i 's|access_log .*access.log;|access_log /var/log/nginx/access.log backend_tracking;|' "$CONF_FILE"
+
+                # Define our nGinx Service
+                sudo tee /etc/nginx/sites-available/nxrm-lb > /dev/null <<'EOF'
+                upstream nxrm_cluster {
+                    server localhost:8081 max_fails=0;
+                    server localhost:8082 max_fails=0;
+                    server localhost:8083 max_fails=0;
+                }
+
+                server {
+                    listen 8080;
+
+                    location / {
+                        proxy_pass         http://nxrm_cluster;
+                        proxy_set_header   Host              $host;
+                        proxy_set_header   X-Real-IP         $remote_addr;
+                        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+                        proxy_set_header   X-Forwarded-Proto $scheme;
+                        proxy_pass_header  Server;
+                        proxy_read_timeout  300s;
+                        proxy_connect_timeout 30s;
+                        proxy_send_timeout  300s;
+                    }
+                }
+                EOF
+                sudo rm -f /etc/nginx/sites-enabled/default
+                sudo ln -s /etc/nginx/sites-available/nxrm-lb /etc/nginx/sites-enabled/nxrm-lb
+                sudo nginx -t
+                sudo systemctl start nginx
+
+            - uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
               with:
                   go-version-file: 'go.mod'
                   cache: true
 
             - name: Setup Terraform
-              uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+              uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4.0.0
               with:
                   terraform_version: ${{ matrix.terraform }}
                   terraform_wrapper: false
             - run: go mod download
             - env:
-                  NXRM_SERVER_URL: "http://localhost:8081"
+                  NXRM_SERVER_URL: "http://localhost:8080"
                   NXRM_SERVER_USERNAME: "admin"
                   NXRM_SERVER_PASSWORD: "admin123"
                   NXRM_VERSION: "${{ matrix.nxrm }}"
                   TF_ACC: '1'
                   TF_ACC_HA_MODE: '1'
                   TF_ACC_HA_BLOB_STORE_PATH: "${{ github.workspace }}/storage/default"
-              run: go test -v -cover ./...
-              timeout-minutes: 10
+                  TF_ACC_IQ_SERVER: '1'
+                  IQ_SERVER_URL: "http://localhost:8070"
+                  IQ_SERVER_USERNAME: "admin"
+                  IQ_SERVER_PASSWORD: "admin123"
+              run: go test -v -cover -timeout 90m -p 4 ./...
+              timeout-minutes: 100
 
             - name: Store nexus.log (Node 1)
               if: success() || failure()
-              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                 name: "nexus-node-01.log-nxrm-${{ matrix.nxrm }}-terraform-${{ env.TF_SAFE_VERSION }}"
                 path: "${{ github.workspace }}/node-01/sonatype-work/nexus3/log/nexus.log"
 
             - name: Store nexus.log (Node 2)
               if: success() || failure()
-              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                 name: "nexus-node-02.log-nxrm-${{ matrix.nxrm }}-terraform-${{ env.TF_SAFE_VERSION }}"
                 path: "${{ github.workspace }}/node-02/sonatype-work/nexus3/log/nexus.log"
 
             - name: Store nexus.log (Node 3)
               if: success() || failure()
-              uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
               with:
                 name: "nexus-node-03.log-nxrm-${{ matrix.nxrm }}-terraform-${{ env.TF_SAFE_VERSION }}"
                 path: "${{ github.workspace }}/node-03/sonatype-work/nexus3/log/nexus.log"
+
+            - name: Store nginx access log
+              if: success() || failure()
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              with:
+                name: "nginx-access.log-nxrm-${{ matrix.nxrm }}-terraform-${{ env.TF_SAFE_VERSION }}"
+                path: "/var/log/nginx/access.log"
+
+            - name: Store clm-server.log
+              if: success() || failure()
+              uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+              with:
+                name: "clm-server.log-nxrm-${{ matrix.nxrm }}-terraform-${{ env.TF_SAFE_VERSION }}"
+                path: "${{ github.workspace }}/nxiq/log/clm-server.log"

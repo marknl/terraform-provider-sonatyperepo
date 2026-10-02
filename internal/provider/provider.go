@@ -19,6 +19,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"regexp"
@@ -33,7 +34,9 @@ import (
 	"terraform-provider-sonatyperepo/internal/provider/system"
 	"terraform-provider-sonatyperepo/internal/provider/task"
 	"terraform-provider-sonatyperepo/internal/provider/user"
+	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int32validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -45,6 +48,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	sonatyperepo "github.com/sonatype-nexus-community/nexus-repo-api-client-go/v3"
+	sonatyperepoV395 "github.com/sonatype-nexus-community/nexus-repo-api-client-go/v395"
 )
 
 // Ensure SonatypeRepoProvider satisfies various provider interfaces.
@@ -60,11 +64,12 @@ type SonatypeRepoProvider struct {
 
 // SonatypeRepoProviderModel describes the provider data model.
 type SonatypeRepoProviderModel struct {
-	Url         types.String `tfsdk:"url"`
-	Username    types.String `tfsdk:"username"`
-	Password    types.String `tfsdk:"password"`
-	ApiBasePath types.String `tfsdk:"api_base_path"`
-	VersionHint types.String `tfsdk:"version_hint"`
+	Url                         types.String `tfsdk:"url"`
+	Username                    types.String `tfsdk:"username"`
+	Password                    types.String `tfsdk:"password"`
+	ApiBasePath                 types.String `tfsdk:"api_base_path"`
+	ClusterStabilisationDelayMs types.Int32  `tfsdk:"cluster_stabilisation_delay_ms"`
+	VersionHint                 types.String `tfsdk:"version_hint"`
 }
 
 func (p *SonatypeRepoProvider) Metadata(ctx context.Context, req provider.MetadataRequest, resp *provider.MetadataResponse) {
@@ -76,21 +81,31 @@ func (p *SonatypeRepoProvider) Schema(ctx context.Context, req provider.SchemaRe
 	resp.Schema = schema.Schema{
 		Attributes: map[string]schema.Attribute{
 			"url": schema.StringAttribute{
-				MarkdownDescription: "Sonatype Nexus Repository Server URL",
+				MarkdownDescription: "Sonatype Nexus Repository Server URL. Can also be set using the `NXRM_SERVER_URL` environment variable.",
 				Required:            true,
 			},
 			"username": schema.StringAttribute{
-				MarkdownDescription: "Username for Sonatype Nexus Repository Server, requires role/permissions scoped to the resources you wish to manage",
+				MarkdownDescription: "Username for Sonatype Nexus Repository Server, requires role/permissions scoped to the resources you wish to manage. Can also be set using the `NXRM_SERVER_USERNAME` environment variable.",
 				Required:            true,
 			},
 			"password": schema.StringAttribute{
-				MarkdownDescription: "Password for your user for Sonatype Nexus Repository Server",
+				MarkdownDescription: "Password for your user for Sonatype Nexus Repository Server. Can also be set using the `NXRM_SERVER_PASSWORD` environment variable.",
 				Required:            true,
 				Sensitive:           true,
 			},
 			"api_base_path": schema.StringAttribute{
 				Optional:            true,
 				MarkdownDescription: "Base Path at which the API is present - defaults to `/service/rest`. This only needs to be set if you run Sonatype Nexus Repository at a Base Path that is not `/`.",
+			},
+			"cluster_stabilisation_delay_ms": schema.Int32Attribute{
+				Optional: true,
+				MarkdownDescription: fmt.Sprintf(`Delay after write requests to allow for multi-node Cluster events to be processed by all Nodes before read requests. Only applies when running against a cluster with >1 active node.
+				
+> [!NOTE]
+> Only set this if you are experiencing issues - the default value (%d) should suffice for most scenarios.`, common.DEFAULT_CLUSTER_STABILISATION_MS),
+				Validators: []validator.Int32{
+					int32validator.Between(10, 30000),
+				},
 			},
 			"version_hint": schema.StringAttribute{
 				MarkdownDescription: `You can set this to the full version string (e.g. "3.85.0-03 (PRO)" or "3.80.0-06 (OSS)") of Sonatype Nexus Repository that you are connecting to.
@@ -129,26 +144,32 @@ func (p *SonatypeRepoProvider) Configure(ctx context.Context, req provider.Confi
 		return
 	}
 
-	nxrmUrl, username, password, apiBasePath, versionHint := p.parseConfig(&config)
+	nxrmUrl, username, password, apiBasePath, clusterStabilisationDelayMs, versionHint := p.parseConfig(&config)
 
 	p.validateConfig(resp, nxrmUrl, &config)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	ds := p.createClient(nxrmUrl, username, password, apiBasePath)
+	ds := p.createBootstrapClient(nxrmUrl, username, password, apiBasePath, clusterStabilisationDelayMs)
 
+	// Do Checks
 	p.checkVersion(ctx, &ds, resp, versionHint)
+	ds.ClusterNodeCount(ctx, &resp.Diagnostics)
+
+	// Upate to real Client
+	p.createRealClient(nxrmUrl, apiBasePath, &ds)
 
 	resp.DataSourceData = ds
 	resp.ResourceData = ds
 }
 
-func (p *SonatypeRepoProvider) parseConfig(config *SonatypeRepoProviderModel) (string, string, string, string, *string) {
+func (p *SonatypeRepoProvider) parseConfig(config *SonatypeRepoProviderModel) (string, string, string, string, int32, *string) {
 	nxrmUrl := os.Getenv("NXRM_SERVER_URL")
 	username := os.Getenv("NXRM_SERVER_USERNAME")
 	password := os.Getenv("NXRM_SERVER_PASSWORD")
 	apiBasePath := "/service/rest"
+	var clusterStabilisationDelayMs = common.DEFAULT_CLUSTER_STABILISATION_MS
 	var versionHint *string
 
 	if !config.Url.IsNull() && len(config.Url.ValueString()) > 0 {
@@ -167,12 +188,16 @@ func (p *SonatypeRepoProvider) parseConfig(config *SonatypeRepoProviderModel) (s
 		apiBasePath = config.ApiBasePath.ValueString()
 	}
 
+	if !config.ClusterStabilisationDelayMs.IsNull() {
+		clusterStabilisationDelayMs = config.ClusterStabilisationDelayMs.ValueInt32()
+	}
+
 	if !config.VersionHint.IsNull() && len(config.VersionHint.ValueString()) > 0 {
 		v := fmt.Sprintf("Nexus/%s", config.VersionHint.ValueString())
 		versionHint = &v
 	}
 
-	return nxrmUrl, username, password, apiBasePath, versionHint
+	return nxrmUrl, username, password, apiBasePath, clusterStabilisationDelayMs, versionHint
 }
 
 func (p *SonatypeRepoProvider) validateConfig(resp *provider.ConfigureResponse, nxrmUrl string, config *SonatypeRepoProviderModel) {
@@ -209,7 +234,7 @@ func (p *SonatypeRepoProvider) validateConfig(resp *provider.ConfigureResponse, 
 	}
 }
 
-func (p *SonatypeRepoProvider) createClient(nxrmUrl, username, password, apiBasePath string) common.SonatypeDataSourceData {
+func (p *SonatypeRepoProvider) apiClientConfiguration(nxrmUrl, apiBasePath string) *sonatyperepo.Configuration {
 	configuration := sonatyperepo.NewConfiguration()
 	configuration.UserAgent = "sonatyperepo-terraform/" + p.version
 	configuration.Servers = []sonatyperepo.ServerConfiguration{
@@ -218,13 +243,83 @@ func (p *SonatypeRepoProvider) createClient(nxrmUrl, username, password, apiBase
 			Description: "Sonatype Nexus Repository Server",
 		},
 	}
+	return configuration
+}
 
-	client := sonatyperepo.NewAPIClient(configuration)
-	return common.SonatypeDataSourceData{
-		Auth:    sonatyperepo.BasicAuth{UserName: username, Password: password},
-		BaseUrl: strings.TrimRight(nxrmUrl, "/"),
-		Client:  client,
+func (p *SonatypeRepoProvider) apiClientConfigurationV395(nxrmUrl, apiBasePath string) *sonatyperepoV395.Configuration {
+	configuration := sonatyperepoV395.NewConfiguration()
+	configuration.UserAgent = "sonatyperepo-terraform/" + p.version
+	configuration.Servers = []sonatyperepoV395.ServerConfiguration{
+		{
+			URL:         fmt.Sprintf("%s%s", strings.TrimRight(nxrmUrl, "/"), strings.TrimRight(apiBasePath, "/")),
+			Description: "Sonatype Nexus Repository Server",
+		},
 	}
+	return configuration
+}
+
+func (p *SonatypeRepoProvider) createBootstrapClient(nxrmUrl, username, password, apiBasePath string, clusterStabilisationDelayMs int32) common.SonatypeDataSourceData {
+	configuration := p.apiClientConfiguration(nxrmUrl, apiBasePath)
+	client := sonatyperepo.NewAPIClient(configuration)
+
+	return common.SonatypeDataSourceData{
+		Auth:                          sonatyperepo.BasicAuth{UserName: username, Password: password},
+		BaseUrl:                       strings.TrimRight(nxrmUrl, "/"),
+		Client:                        client,
+		ClusterSynchronisationDelayMs: clusterStabilisationDelayMs,
+	}
+}
+
+func (p *SonatypeRepoProvider) createRealClient(nxrmUrl, apiBasePath string, ds *common.SonatypeDataSourceData) {
+	// 1. Initialize the custom transport, shared by both client generations
+	customTransport := &MiddlewareTransport{
+		Base:                        http.DefaultTransport,
+		ClusterStabilisationDelayMs: ds.ClusterSynchronisationDelayMs,
+		NodeCount:                   ds.NodeCount,
+	}
+	httpClient := &http.Client{
+		Transport: customTransport,
+	}
+
+	// 2. V382 client (used for NXRM < 3.94.0)
+	configuration := p.apiClientConfiguration(nxrmUrl, apiBasePath)
+	configuration.HTTPClient = httpClient
+	ds.Client = sonatyperepo.NewAPIClient(configuration)
+
+	// 3. V395 client (used for NXRM 3.94.0+)
+	configurationV395 := p.apiClientConfigurationV395(nxrmUrl, apiBasePath)
+	configurationV395.HTTPClient = httpClient
+	clientV395 := sonatyperepoV395.NewAPIClient(configurationV395)
+
+	// 4. Resolve domain services to the client generation matching the connected server
+	ds.Services = common.NewServices(ds.NxrmVersion, ds.Client, clientV395)
+}
+
+// MiddlewareTransport wraps an existing RoundTripper to inject custom logic
+type MiddlewareTransport struct {
+	Base                        http.RoundTripper
+	ClusterStabilisationDelayMs int32
+	NodeCount                   int32
+}
+
+func (t *MiddlewareTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// 1. Send the request and wait for the result
+	// The Base transport performs the actual network call
+	resp, err := t.Base.RoundTrip(req)
+
+	// 2. Implement Cluster Synchronisation Delay if a WRITE call and NODE COUNT > 1 (and API call was not in error)
+	if req.Method == http.MethodPost || req.Method == http.MethodPut || req.Method == http.MethodDelete {
+		if err == nil {
+			if t.NodeCount > 1 {
+				tflog.Info(req.Context(), fmt.Sprintf("Performing Cluster Synchronisation Delay of %dms", t.ClusterStabilisationDelayMs))
+				time.Sleep(time.Millisecond * time.Duration(t.ClusterStabilisationDelayMs))
+				tflog.Debug(req.Context(), "Completed Cluster Synchronisation Delay")
+			}
+		}
+	}
+
+	// 3. Return the response to the caller
+	return resp, err
 }
 
 func (p *SonatypeRepoProvider) checkVersion(ctx context.Context, ds *common.SonatypeDataSourceData, resp *provider.ConfigureResponse, versionHint *string) {
@@ -241,6 +336,7 @@ func (p *SonatypeRepoProvider) checkVersion(ctx context.Context, ds *common.Sona
 
 func (p *SonatypeRepoProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
+		blob_store.NewBlobStoreAcsResource,
 		blob_store.NewBlobStoreFileResource,
 		blob_store.NewBlobStoreGroupResource,
 		blob_store.NewBlobStoreS3Resource,
@@ -265,6 +361,12 @@ func (p *SonatypeRepoProvider) Resources(ctx context.Context) []func() resource.
 		privilege.NewRepositoryViewPrivilegeResource,
 		privilege.NewScriptPrivilegeResource,
 		privilege.NewWildcardPrivilegeResource,
+		repository.NewRepositoryAlpineHostedResource,
+		repository.NewRepositoryAlpineProxyResource,
+		repository.NewRepositoryAlpineGroupResource,
+		repository.NewRepositoryAnsibleGalaxyHostedResource,
+		repository.NewRepositoryAnsibleGalaxyProxyResource,
+		repository.NewRepositoryAnsibleGalaxyGroupResource,
 		repository.NewRepositoryAptHostedResource,
 		repository.NewRepositoryAptProxyResource,
 		repository.NewRepositoryCargoGroupResource,
@@ -281,7 +383,9 @@ func (p *SonatypeRepoProvider) Resources(ctx context.Context) []func() resource.
 		repository.NewRepositoryDockerProxyResource,
 		repository.NewRepositoryGitLfsHostedResource,
 		repository.NewRepositoryGoGroupResource,
+		repository.NewRepositoryGoHostedResource,
 		repository.NewRepositoryGoProxyResource,
+		repository.NewRepositoryHelmGroupResource,
 		repository.NewRepositoryHelmHostedResource,
 		repository.NewRepositoryHelmProxyResource,
 		repository.NewRepositoryHuggingFaceProxyResource,
@@ -298,7 +402,13 @@ func (p *SonatypeRepoProvider) Resources(ctx context.Context) []func() resource.
 		repository.NewRepositoryNugetGroupResource,
 		repository.NewRepositoryNugetHostedResource,
 		repository.NewRepositoryNugetProxyResource,
+		repository.NewRepositoryOciGroupResource,
+		repository.NewRepositoryOciHostedResource,
+		repository.NewRepositoryOciProxyResource,
 		repository.NewRepositoryP2ProxyResource,
+		repository.NewRepositoryPubGroupResource,
+		repository.NewRepositoryPubHostedResource,
+		repository.NewRepositoryPubProxyResource,
 		repository.NewRepositoryPyPiGroupResource,
 		repository.NewRepositoryPyPiHostedResource,
 		repository.NewRepositoryPyPiProxyResource,
@@ -316,6 +426,8 @@ func (p *SonatypeRepoProvider) Resources(ctx context.Context) []func() resource.
 		repository.NewRepositoryRubyGemsHostedDeprecated,
 		repository.NewRepositoryRubyGemsProxyDeprecated,
 		repository.NewRepositorySwiftProxyResource,
+		repository.NewRepositorySwiftGroupResource,
+		repository.NewRepositoryTerraformGroupResource,
 		repository.NewRepositoryTerraformHostedResource,
 		repository.NewRepositoryTerraformProxyResource,
 		repository.NewRepositoryYumGroupResource,
@@ -331,8 +443,11 @@ func (p *SonatypeRepoProvider) Resources(ctx context.Context) []func() resource.
 		system.NewSystemConfigMailResource,
 		system.NewSystemConfigIqConnectionResource,
 		system.NewSecurityRealmsResource,
+		system.NewSecurityOAuth2Resource,
 		system.NewSecuritySamlResource,
+		system.NewSecuritySsrfProtectionResource,
 		system.NewSecurityUserTokenResource,
+		system.NewSecuritySslTruststoreResource,
 		task.NewTaskBlobstoreCompactResource,
 		task.NewTaskLicenseExpirationNotificationResource,
 		task.NewTaskMalwareRemediatorResource,
@@ -340,6 +455,7 @@ func (p *SonatypeRepoProvider) Resources(ctx context.Context) []func() resource.
 		task.NewTaskRepositoryDockerGcResource,
 		task.NewTaskRepositoryDockerUploadPurgeResource,
 		task.NewTaskRepositoryMavenRemoveSnapshotsResource,
+		task.NewTaskRepositoryPurgeUnusedResource,
 		user.NewUserResource,
 	}
 }
@@ -347,6 +463,7 @@ func (p *SonatypeRepoProvider) Resources(ctx context.Context) []func() resource.
 func (p *SonatypeRepoProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		blob_store.BlobStoresDataSource,
+		blob_store.BlobStoreAcsDataSource,
 		blob_store.BlobStoreFileDataSource,
 		blob_store.BlobStoreGroupDataSource,
 		blob_store.BlobStoreS3DataSource,

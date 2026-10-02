@@ -64,27 +64,27 @@ func (f *RawRepositoryFormat) ResourceName(repoType RepositoryType) string {
 // --------------------------------------------
 // Hosted Raw Format Functions
 // --------------------------------------------
-func (f *RawRepositoryFormatHosted) DoCreateRequest(plan any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *RawRepositoryFormatHosted) DoCreateRequest(plan any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryRawHostedModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.CreateRawHostedRepository(ctx).Body(planModel.ToApiCreateModel()).Execute()
+	return apiClient.CreateRawHostedRepository(ctx, planModel.ToApiCreateModel())
 }
 
-func (f *RawRepositoryFormatHosted) DoReadRequest(state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *RawRepositoryFormatHosted) DoReadRequest(state any, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Cast to correct State Model Type
 	stateModel := (state).(model.RepositoryRawHostedModel)
 
 	// Call to API to Read
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetRawHostedRepository(ctx, stateModel.Name.ValueString()).Execute()
+	apiResponse, httpResponse, err := apiClient.GetRawHostedRepository(ctx, stateModel.Name.ValueString())
 	if err != nil {
 		return nil, httpResponse, err
 	}
 	return *apiResponse, httpResponse, err
 }
 
-func (f *RawRepositoryFormatHosted) DoUpdateRequest(plan any, state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *RawRepositoryFormatHosted) DoUpdateRequest(plan any, state any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryRawHostedModel)
 
@@ -92,13 +92,13 @@ func (f *RawRepositoryFormatHosted) DoUpdateRequest(plan any, state any, apiClie
 	stateModel := (state).(model.RepositoryRawHostedModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.UpdateRawHostedRepository(ctx, stateModel.Name.ValueString()).Body(planModel.ToApiUpdateModel()).Execute()
+	return apiClient.UpdateRawHostedRepository(ctx, stateModel.Name.ValueString(), planModel.ToApiUpdateModel())
 }
 
 // DoImportRequest implements the import functionality for Raw Hosted repositories
-func (f *RawRepositoryFormatHosted) DoImportRequest(repositoryName string, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *RawRepositoryFormatHosted) DoImportRequest(repositoryName string, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Call to API to Read repository for import
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetRawHostedRepository(ctx, repositoryName).Execute()
+	apiResponse, httpResponse, err := apiClient.GetRawHostedRepository(ctx, repositoryName)
 	if err != nil {
 		return nil, httpResponse, err
 	}
@@ -140,49 +140,55 @@ func (f *RawRepositoryFormatHosted) UpdateStateFromApi(state any, api any) any {
 // --------------------------------------------
 // PROXY Raw Format Functions
 // --------------------------------------------
-func (f *RawRepositoryFormatProxy) DoCreateRequest(plan any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *RawRepositoryFormatProxy) DoCreateRequest(plan any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryRawProxyModel)
 
+	// Compute inline firewall mode (NXRM 3.94+); ignored by pre-3.94 service implementations
+	firewallMode := ComputeFirewallMode(f, planModel)
+
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.CreateRawProxyRepository(ctx).Body(planModel.ToApiCreateModel()).Execute()
+	return apiClient.CreateRawProxyRepository(ctx, planModel.ToApiCreateModel(), &firewallMode)
 }
 
-func (f *RawRepositoryFormatProxy) DoReadRequest(state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *RawRepositoryFormatProxy) DoReadRequest(state any, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Cast to correct State Model Type
 	stateModel := (state).(model.RepositoryRawProxyModel)
 
 	// Call to API to Read
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetRawProxyRepository(ctx, stateModel.Name.ValueString()).Execute()
+	apiResponse, firewallMode, httpResponse, err := apiClient.GetRawProxyRepository(ctx, stateModel.Name.ValueString())
 	if err != nil {
 		return nil, httpResponse, err
 	}
-	return *apiResponse, httpResponse, err
+	return ProxyApiResponseWithFirewall{Repository: *apiResponse, FirewallMode: firewallMode}, httpResponse, err
 }
 
-func (f *RawRepositoryFormatProxy) DoUpdateRequest(plan any, state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *RawRepositoryFormatProxy) DoUpdateRequest(plan any, state any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryRawProxyModel)
 
 	// Cast to correct State Model Type
 	stateModel := (state).(model.RepositoryRawProxyModel)
 
+	// Compute inline firewall mode (NXRM 3.94+); ignored by pre-3.94 service implementations
+	firewallMode := ComputeFirewallMode(f, planModel)
+
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.UpdateRawProxyRepository(ctx, stateModel.Name.ValueString()).Body(planModel.ToApiUpdateModel()).Execute()
+	return apiClient.UpdateRawProxyRepository(ctx, stateModel.Name.ValueString(), planModel.ToApiUpdateModel(), &firewallMode)
 }
 
 // DoImportRequest implements the import functionality for Raw Proxy repositories
-func (f *RawRepositoryFormatProxy) DoImportRequest(repositoryName string, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *RawRepositoryFormatProxy) DoImportRequest(repositoryName string, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Call to API to Read repository for import
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetRawProxyRepository(ctx, repositoryName).Execute()
+	apiResponse, firewallMode, httpResponse, err := apiClient.GetRawProxyRepository(ctx, repositoryName)
 	if err != nil {
 		return nil, httpResponse, err
 	}
-	return *apiResponse, httpResponse, nil
+	return ProxyApiResponseWithFirewall{Repository: *apiResponse, FirewallMode: firewallMode}, httpResponse, nil
 }
 
 func (f *RawRepositoryFormatProxy) FormatSchemaAttributes() map[string]tfschema.Attribute {
-	additionalAttributes := commonProxySchemaAttributes(f.SupportsRepositoryFirewall(), f.SupportsRepositoryFirewallPccs())
+	additionalAttributes := commonProxySchemaAttributes(f.SupportsRepositoryFirewall(), f.SupportsRepositoryFirewallPccs(), f.SupportsPreemptiveAuthentication())
 	maps.Copy(additionalAttributes, rawSchemaAttributes())
 	return additionalAttributes
 }
@@ -209,6 +215,27 @@ func (f *RawRepositoryFormatProxy) UpdateStateFromApi(state any, api any) any {
 	if state != nil {
 		stateModel = (state).(model.RepositoryRawProxyModel)
 	}
+
+	// NXRM 3.94+ returns the repository wrapped with its inline firewall mode; use that
+	// directly instead of the Capability-based UpateStateWithCapability path.
+	if wrapped, ok := api.(ProxyApiResponseWithFirewall); ok {
+		stateModel.FromApiModel((wrapped.Repository).(sonatyperepo.RawProxyApiRepository))
+		if wrapped.FirewallMode != nil {
+			keep, enabled, quarantine, _ := ResolveFirewallBlockFlags(stateModel.FirewallAuditAndQuarantine != nil, *wrapped.FirewallMode)
+			if !keep {
+				stateModel.FirewallAuditAndQuarantine = nil
+			} else {
+				if stateModel.FirewallAuditAndQuarantine == nil {
+					stateModel.FirewallAuditAndQuarantine = model.NewFirewallAuditAndQuarantineModelWithDefaults()
+				}
+				stateModel.FirewallAuditAndQuarantine.CapabilityId = types.StringNull()
+				stateModel.FirewallAuditAndQuarantine.Enabled = types.BoolValue(enabled)
+				stateModel.FirewallAuditAndQuarantine.Quarantine = types.BoolValue(quarantine)
+			}
+		}
+		return stateModel
+	}
+
 	stateModel.FromApiModel((api).(sonatyperepo.RawProxyApiRepository))
 	return stateModel
 }
@@ -222,6 +249,7 @@ func (f *RawRepositoryFormatProxy) UpdateStateFromPlanForNonApiFields(plan, stat
 	}
 
 	stateModel.MapMissingApiFieldsFromPlan(planModel)
+	stateModel.FirewallAuditAndQuarantine = ReconcileFirewallBlockWithPlan(stateModel.FirewallAuditAndQuarantine, planModel.FirewallAuditAndQuarantine)
 	return stateModel
 }
 
@@ -282,27 +310,27 @@ func (f *RawRepositoryFormatProxy) GetRepositoryFirewallQuarantineEnabled(state 
 // --------------------------------------------
 // GORUP Raw Format Functions
 // --------------------------------------------
-func (f *RawRepositoryFormatGroup) DoCreateRequest(plan any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *RawRepositoryFormatGroup) DoCreateRequest(plan any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryRawGroupModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.CreateRawGroupRepository(ctx).Body(planModel.ToApiCreateModel()).Execute()
+	return apiClient.CreateRawGroupRepository(ctx, planModel.ToApiCreateModel())
 }
 
-func (f *RawRepositoryFormatGroup) DoReadRequest(state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *RawRepositoryFormatGroup) DoReadRequest(state any, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Cast to correct State Model Type
 	stateModel := (state).(model.RepositoryRawGroupModel)
 
 	// Call to API to Read
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetRawGroupRepository(ctx, stateModel.Name.ValueString()).Execute()
+	apiResponse, httpResponse, err := apiClient.GetRawGroupRepository(ctx, stateModel.Name.ValueString())
 	if err != nil {
 		return nil, httpResponse, err
 	}
 	return *apiResponse, httpResponse, err
 }
 
-func (f *RawRepositoryFormatGroup) DoUpdateRequest(plan any, state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *RawRepositoryFormatGroup) DoUpdateRequest(plan any, state any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositoryRawGroupModel)
 
@@ -310,7 +338,7 @@ func (f *RawRepositoryFormatGroup) DoUpdateRequest(plan any, state any, apiClien
 	stateModel := (state).(model.RepositoryRawGroupModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.UpdateRawGroupRepository(ctx, stateModel.Name.ValueString()).Body(planModel.ToApiUpdateModel()).Execute()
+	return apiClient.UpdateRawGroupRepository(ctx, stateModel.Name.ValueString(), planModel.ToApiUpdateModel())
 }
 
 func (f *RawRepositoryFormatGroup) FormatSchemaAttributes() map[string]tfschema.Attribute {
@@ -346,9 +374,9 @@ func (f *RawRepositoryFormatGroup) UpdateStateFromApi(state any, api any) any {
 }
 
 // DoImportRequest implements the import functionality for Raw Group repositories
-func (f *RawRepositoryFormatGroup) DoImportRequest(repositoryName string, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *RawRepositoryFormatGroup) DoImportRequest(repositoryName string, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Call to API to Read repository for import
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetRawGroupRepository(ctx, repositoryName).Execute()
+	apiResponse, httpResponse, err := apiClient.GetRawGroupRepository(ctx, repositoryName)
 	if err != nil {
 		return nil, httpResponse, err
 	}

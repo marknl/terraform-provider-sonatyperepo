@@ -33,7 +33,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	sonatyperepo "github.com/sonatype-nexus-community/nexus-repo-api-client-go/v3"
 
 	"github.com/sonatype-nexus-community/terraform-provider-shared/errors"
 	"github.com/sonatype-nexus-community/terraform-provider-shared/schema"
@@ -79,14 +78,10 @@ func (t *taskResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 
 	// Request Context
-	ctx = context.WithValue(
-		ctx,
-		sonatyperepo.ContextBasicAuth,
-		t.Auth,
-	)
+	ctx = t.AuthContext(ctx)
 
 	// Make API requet
-	taskCreateResponse, httpResponse, err := t.TaskType.DoCreateRequest(plan, t.Client, ctx, t.NxrmVersion)
+	taskCreateResponse, httpResponse, err := t.TaskType.DoCreateRequest(plan, t.Services.Task, ctx, t.NxrmVersion)
 
 	// Handle Errors
 	if err != nil {
@@ -116,7 +111,57 @@ func (t *taskResource) Create(ctx context.Context, req resource.CreateRequest, r
 }
 
 func (t *taskResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	// EMPTY
+	// Retrieve values from state
+	stateModel, diags := t.TaskType.StateAsModel(ctx, req.State)
+	resp.Diagnostics.Append(diags...)
+
+	if resp.Diagnostics.HasError() {
+		tflog.Error(ctx, fmt.Sprintf("Getting state data has errors: %v", resp.Diagnostics.Errors()))
+		return
+	}
+
+	// Extract Task ID from State (matches the reflection used by Delete)
+	taskIdStructField := reflect.Indirect(reflect.ValueOf(stateModel)).FieldByName("Id").Interface()
+	taskId, ok := taskIdStructField.(basetypes.StringValue)
+	if !ok || taskId.IsNull() || taskId.ValueString() == "" {
+		resp.Diagnostics.AddError(
+			"Failed to determine Task ID to read from State",
+			fmt.Sprintf("%s %s", TASK_ERROR_RESPONSE_PREFIX, taskIdStructField),
+		)
+		return
+	}
+
+	// Request Context
+	ctx = t.AuthContext(ctx)
+
+	// Make API request
+	apiResponse, httpResponse, err := t.Services.Task.GetTaskById(ctx, taskId.ValueString())
+
+	if err != nil {
+		if httpResponse != nil && httpResponse.StatusCode == http.StatusNotFound {
+			resp.State.RemoveResource(ctx)
+			errors.HandleAPIWarning(
+				fmt.Sprintf(TASK_ERROR_DID_NOT_EXIST, t.TaskType.Type().String(), "read"),
+				&err,
+				httpResponse,
+				&resp.Diagnostics,
+			)
+		} else {
+			errors.HandleAPIError(
+				fmt.Sprintf("Error reading %s Task", t.TaskType.Type().String()),
+				&err,
+				httpResponse,
+				&resp.Diagnostics,
+			)
+		}
+		return
+	}
+
+	// The public REST API only returns id/name/type/schedule for a Task; nested
+	// `properties` and `frequency` cannot be refreshed here, so drift on those
+	// fields is not detected. Apply re-asserts the configured values.
+	stateModel = t.TaskType.UpdateStateFromApi(stateModel, *apiResponse)
+	resp.Diagnostics.Append(resp.State.Set(ctx, stateModel)...)
 }
 
 func (t *taskResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -128,15 +173,17 @@ func (t *taskResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	stateModel, diags := t.TaskType.StateAsModel(ctx, req.State)
 	resp.Diagnostics.Append(diags...)
 
+	// Bail out before issuing the API request if Plan/State could not be read,
+	if resp.Diagnostics.HasError() {
+		tflog.Error(ctx, fmt.Sprintf("Getting plan or state data has errors: %v", resp.Diagnostics.Errors()))
+		return
+	}
+
 	// Request Context
-	ctx = context.WithValue(
-		ctx,
-		sonatyperepo.ContextBasicAuth,
-		t.Auth,
-	)
+	ctx = t.AuthContext(ctx)
 
 	// Make API requet
-	httpResponse, err := t.TaskType.DoUpdateRequest(planModel, stateModel, t.Client, ctx, t.NxrmVersion)
+	httpResponse, err := t.TaskType.DoUpdateRequest(planModel, stateModel, t.Services.Task, ctx, t.NxrmVersion)
 
 	// Handle any errors
 	if err != nil {
@@ -178,11 +225,7 @@ func (t *taskResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	}
 
 	// Request Context
-	ctx = context.WithValue(
-		ctx,
-		sonatyperepo.ContextBasicAuth,
-		t.Auth,
-	)
+	ctx = t.AuthContext(ctx)
 
 	// Make API request
 	taskIdStructField := reflect.Indirect(reflect.ValueOf(state)).FieldByName("Id").Interface()
@@ -200,7 +243,7 @@ func (t *taskResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	success := false
 
 	for !success && attempts < maxAttempts {
-		httpResponse, err := t.Client.TasksAPI.DeleteTaskById(ctx, taskId.ValueString()).Execute()
+		httpResponse, err := t.Services.Task.DeleteTaskById(ctx, taskId.ValueString())
 
 		// Trap 500 Error as they occur when Repo is not in appropriate internal state
 		if httpResponse.StatusCode == http.StatusInternalServerError {
@@ -267,8 +310,8 @@ func taskSchema(tt tasktype.TaskTypeI) tfschema.Schema {
 					common.FREQUENCY_SCHEDULE_MONTHLY,
 					common.FREQUENCY_SCHEDULE_CRON,
 				),
-				"start_date": schema.ResourceOptionalInt32(
-					"Start date of the task represented in unix timestamp. Does not apply for \"manual\" schedule.",
+				"start_date": schema.ResourceOptionalInt64(
+					"Start date of the task represented in unix timestamp. Sonatype Nexus Repository persists this in milliseconds, so values for any modern date are 13 digits (e.g. `1777167000000` for 2026-04-26 01:30 UTC). Does not apply for \"manual\" schedule.",
 				),
 				"timezone_offset": schema.ResourceOptionalString("The offset time zone of the client. Example: -05:00"),
 				"recurring_days": func() tfschema.ListAttribute {

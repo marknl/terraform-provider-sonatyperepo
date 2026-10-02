@@ -20,8 +20,6 @@ import (
 	"terraform-provider-sonatyperepo/internal/provider/common"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
-
-	v3 "github.com/sonatype-nexus-community/nexus-repo-api-client-go/v3"
 )
 
 // Properties for blobstore.compact
@@ -44,18 +42,22 @@ func (p *TaskPropertiesBlobstoreCompact) GetFilteredPropertiesAsMap(version comm
 // ----------------------------------------
 type TaskBlobstoreCompactModel struct {
 	BaseTaskModel
-	Properties TaskPropertiesBlobstoreCompact `tfsdk:"properties"`
+	Properties *TaskPropertiesBlobstoreCompact `tfsdk:"properties"`
 }
 
-func (m *TaskBlobstoreCompactModel) ToApiCreateModel(version common.SystemVersion) *v3.TaskTemplateXO {
+func (m *TaskBlobstoreCompactModel) ToApiCreateModel(version common.SystemVersion) *common.TaskCreateApiModel {
 	api := m.toApiCreateModel()
 	api.Type = common.TASK_TYPE_BLOBSTORE_COMPACT.String()
-	api.Properties = m.Properties.GetFilteredPropertiesAsMap(version)
+	if m.Properties != nil {
+		api.Properties = m.Properties.GetFilteredPropertiesAsMap(version)
+	}
 	return api
 }
 
-func (m *TaskBlobstoreCompactModel) ToApiUpdateModel(version common.SystemVersion) *v3.UpdateTaskRequest {
+func (m *TaskBlobstoreCompactModel) ToApiUpdateModel(version common.SystemVersion) *common.TaskUpdateApiModel {
 	api := m.toApiUpdateModel()
-	api.Properties = m.Properties.GetFilteredPropertiesAsMap(version)
+	if m.Properties != nil {
+		api.Properties = m.Properties.GetFilteredPropertiesAsMap(version)
+	}
 	return api
 }

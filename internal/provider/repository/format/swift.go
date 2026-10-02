@@ -41,6 +41,10 @@ type SwiftRepositoryFormatProxy struct {
 	SwiftRepositoryFormat
 }
 
+type SwiftRepositoryFormatGroup struct {
+	SwiftRepositoryFormat
+}
+
 // --------------------------------------------
 // Generic Swift Format Functions
 // --------------------------------------------
@@ -55,24 +59,27 @@ func (f *SwiftRepositoryFormat) ResourceName(repoType RepositoryType) string {
 // --------------------------------------------
 // PROXY Swift Format Functions
 // --------------------------------------------
-func (f *SwiftRepositoryFormatProxy) DoCreateRequest(plan any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *SwiftRepositoryFormatProxy) DoCreateRequest(plan any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositorySwiftProxyModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.CreateSwiftProxyRepository(ctx).Body(planModel.ToApiCreateModel()).Execute()
+	return apiClient.CreateSwiftProxyRepository(ctx, planModel.ToApiCreateModel())
 }
 
-func (f *SwiftRepositoryFormatProxy) DoReadRequest(state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *SwiftRepositoryFormatProxy) DoReadRequest(state any, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Cast to correct State Model Type
 	stateModel := (state).(model.RepositorySwiftProxyModel)
 
 	// Call to API to Read
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetSwiftProxyRepository(ctx, stateModel.Name.ValueString()).Execute()
+	apiResponse, httpResponse, err := apiClient.GetSwiftProxyRepository(ctx, stateModel.Name.ValueString())
+	if apiResponse == nil {
+		return nil, httpResponse, err
+	}
 	return *apiResponse, httpResponse, err
 }
 
-func (f *SwiftRepositoryFormatProxy) DoUpdateRequest(plan any, state any, apiClient *sonatyperepo.APIClient, ctx context.Context) (*http.Response, error) {
+func (f *SwiftRepositoryFormatProxy) DoUpdateRequest(plan any, state any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.RepositorySwiftProxyModel)
 
@@ -80,13 +87,13 @@ func (f *SwiftRepositoryFormatProxy) DoUpdateRequest(plan any, state any, apiCli
 	stateModel := (state).(model.RepositorySwiftProxyModel)
 
 	// Call API to Create
-	return apiClient.RepositoryManagementAPI.UpdateSwiftProxyRepository(ctx, stateModel.Name.ValueString()).Body(planModel.ToApiUpdateModel()).Execute()
+	return apiClient.UpdateSwiftProxyRepository(ctx, stateModel.Name.ValueString(), planModel.ToApiUpdateModel())
 }
 
 // DoImportRequest implements the import functionality for HuggingFace Proxy repositories
-func (f *SwiftRepositoryFormatProxy) DoImportRequest(repositoryName string, apiClient *sonatyperepo.APIClient, ctx context.Context) (any, *http.Response, error) {
+func (f *SwiftRepositoryFormatProxy) DoImportRequest(repositoryName string, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
 	// Call to API to Read repository for import
-	apiResponse, httpResponse, err := apiClient.RepositoryManagementAPI.GetSwiftProxyRepository(ctx, repositoryName).Execute()
+	apiResponse, httpResponse, err := apiClient.GetSwiftProxyRepository(ctx, repositoryName)
 	if err != nil {
 		return nil, httpResponse, err
 	}
@@ -94,7 +101,7 @@ func (f *SwiftRepositoryFormatProxy) DoImportRequest(repositoryName string, apiC
 }
 
 func (f *SwiftRepositoryFormatProxy) FormatSchemaAttributes() map[string]tfschema.Attribute {
-	additionalAttributes := commonProxySchemaAttributes(f.SupportsRepositoryFirewall(), f.SupportsRepositoryFirewallPccs())
+	additionalAttributes := commonProxySchemaAttributes(f.SupportsRepositoryFirewall(), f.SupportsRepositoryFirewallPccs(), f.SupportsPreemptiveAuthentication())
 	maps.Copy(additionalAttributes, swiftProxySchemaAttributes())
 	return additionalAttributes
 }
@@ -139,6 +146,80 @@ func (f *SwiftRepositoryFormatProxy) UpdateStateFromPlanForNonApiFields(plan, st
 
 func (f *SwiftRepositoryFormatProxy) SupportsRepositoryFirewall() bool {
 	return false
+}
+
+// --------------------------------------------
+// Group Swift Format Functions
+// --------------------------------------------
+func (f *SwiftRepositoryFormatGroup) DoCreateRequest(plan any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
+	// Cast to correct Plan Model Type
+	planModel := (plan).(model.RepositorySwiftGroupModel)
+
+	// Call API to Create
+	return apiClient.CreateSwiftGroupRepository(ctx, planModel.ToApiCreateModel())
+}
+
+func (f *SwiftRepositoryFormatGroup) DoReadRequest(state any, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
+	// Cast to correct State Model Type
+	stateModel := (state).(model.RepositorySwiftGroupModel)
+
+	// Call to API to Read
+	apiResponse, httpResponse, err := apiClient.GetSwiftGroupRepository(ctx, stateModel.Name.ValueString())
+	if apiResponse == nil {
+		return nil, httpResponse, err
+	}
+	return *apiResponse, httpResponse, err
+}
+
+func (f *SwiftRepositoryFormatGroup) DoUpdateRequest(plan any, state any, apiClient common.RepositoryManagementService, ctx context.Context) (*http.Response, error) {
+	// Cast to correct Plan Model Type
+	planModel := (plan).(model.RepositorySwiftGroupModel)
+
+	// Cast to correct State Model Type
+	stateModel := (state).(model.RepositorySwiftGroupModel)
+
+	// Call API to Update
+	return apiClient.UpdateSwiftGroupRepository(ctx, stateModel.Name.ValueString(), planModel.ToApiUpdateModel())
+}
+
+func (f *SwiftRepositoryFormatGroup) FormatSchemaAttributes() map[string]tfschema.Attribute {
+	return commonGroupSchemaAttributes(false)
+}
+
+func (f *SwiftRepositoryFormatGroup) PlanAsModel(ctx context.Context, plan tfsdk.Plan) (any, diag.Diagnostics) {
+	var planModel model.RepositorySwiftGroupModel
+	return planModel, plan.Get(ctx, &planModel)
+}
+
+func (f *SwiftRepositoryFormatGroup) StateAsModel(ctx context.Context, state tfsdk.State) (any, diag.Diagnostics) {
+	var stateModel model.RepositorySwiftGroupModel
+	return stateModel, state.Get(ctx, &stateModel)
+}
+
+func (f *SwiftRepositoryFormatGroup) UpdatePlanForState(plan any) any {
+	var planModel = (plan).(model.RepositorySwiftGroupModel)
+	planModel.LastUpdated = types.StringValue(time.Now().Format(time.RFC850))
+	return planModel
+}
+
+func (f *SwiftRepositoryFormatGroup) UpdateStateFromApi(state any, api any) any {
+	var stateModel model.RepositorySwiftGroupModel
+	// During import, state might be nil, so we create a new model
+	if state != nil {
+		stateModel = (state).(model.RepositorySwiftGroupModel)
+	}
+	stateModel.FromApiModel((api).(sonatyperepo.SwiftGroupApiRepository))
+	return stateModel
+}
+
+// DoImportRequest implements the import functionality for Swift Group repositories
+func (f *SwiftRepositoryFormatGroup) DoImportRequest(repositoryName string, apiClient common.RepositoryManagementService, ctx context.Context) (any, *http.Response, error) {
+	// Call to API to Read repository for import
+	apiResponse, httpResponse, err := apiClient.GetSwiftGroupRepository(ctx, repositoryName)
+	if err != nil {
+		return nil, httpResponse, err
+	}
+	return *apiResponse, httpResponse, nil
 }
 
 // --------------------------------------------

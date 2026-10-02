@@ -24,11 +24,13 @@ We test this Provider against a range of Terraform versions and Sonatype Nexus R
 
 ### Sonatype Nexus Repository Manager
 
-We test on `N - 5` releases (where possible, but no earlier than `3.79.1`). See [here](https://github.com/sonatype-nexus-community/terraform-provider-sonatyperepo/blob/6f926daff44b7d105bb648fede26e7c59fbfb06c/.github/workflows/test-trusted.yml#L75) for the current list.
+This Provider is tested on Sonatype Nexus Repository Manager versions that have not yet entered Extendend Maintenance. 
+
+See [Sonatype Nexus Repository 3 Versions Status](https://help.sonatype.com/en/sonatype-nexus-repository-3-versions-status.html) for details.
 
 ### Terraform Version support
 
-We test on the latest patch release of each the earliest and latest version of Terraform i.e. `1.7.x` and  `1.14.x` - i.e. we aim to support all Terraform versions since `1.7.0` (earlier verions may also work, but are not tested and bugs will not be actioned if they are proven to affect these earlier versions).
+We test on the latest patch release of each the earliest and latest version of Terraform i.e. `1.7.x` and  `1.15.x` - i.e. we aim to support all Terraform versions since `1.7.0` (earlier verions may also work, but are not tested and bugs will not be actioned if they are proven to affect these earlier versions).
 
 ## Usage
 
@@ -57,12 +59,12 @@ Phew, that was easier than I thought. Last but not least of all - have fun!
 
 
 [shield_gh-workflow-test]: https://img.shields.io/github/actions/workflow/status/sonatype-nexus-community/terraform-provider-sonatyperepo/test-trusted.yml?branch=main&logo=GitHub&logoColor=white "build"
-[shield_tfr-version]: https://img.shields.io/badge/Terraform%20Registry-v1.3.0-8A2BE2
+[shield_tfr-version]: https://img.shields.io/badge/Terraform%20Registry-v1.19.2-8A2BE2
 [shield_license]: https://img.shields.io/github/license/sonatype-nexus-community/terraform-provider-sonatyperepo?logo=open%20source%20initiative&logoColor=white "license"
-[shield_tf_version]: https://img.shields.io/badge/Terraform-1.7.0&nbsp;&ndash;&nbsp;1.14.x-blue
-[shield_nxrm_version]: https://img.shields.io/badge/Sonatype_Nexus_Repository-3.79.1&nbsp;&ndash;&nbsp;3.89.1-blue
+[shield_tf_version]: https://img.shields.io/badge/Terraform-1.7.0&nbsp;&ndash;&nbsp;1.15.x-blue
+[shield_nxrm_version]: https://img.shields.io/badge/Sonatype_Nexus_Repository-3.82.0&nbsp;&ndash;&nbsp;3.96.0-blue
 
 [link_tfr]: https://registry.terraform.io/providers/sonatype-nexus-community/sonatyperepo/latest
 [link_gh-workflow-test]: https://github.com/sonatype-nexus-community/terraform-provider-sonatyperepo/actions/workflows/test-trusted.yml?query=branch%3Amain
 [license_file]: https://github.com/sonatype-nexus-community/terraform-provider-sonatyperepo/blob/main/LICENSE
-[link_nxrm_release]: https://help.sonatype.com/en/sonatype-nexus-repository-3-89-0-release-notes.html
+[link_nxrm_release]: https://help.sonatype.com/en/sonatype-nexus-repository-3-96-0-release-notes.html

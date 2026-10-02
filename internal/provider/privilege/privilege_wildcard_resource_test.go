@@ -46,7 +46,7 @@ func TestAccPrivilegeWildcardResource(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceNamePrivilegeWildcard, "description", "some description"),
 					resource.TestCheckResourceAttr(resourceNamePrivilegeWildcard, "read_only", "false"),
 					resource.TestCheckResourceAttr(resourceNamePrivilegeWildcard, "type", privilege_type.TypeWildcard.String()),
-					resource.TestCheckResourceAttr(resourceNamePrivilegeWildcard, "pattern", "test-pattern"),
+					resource.TestCheckResourceAttr(resourceNamePrivilegeWildcard, "pattern", "nexus:test-pattern"),
 				),
 			},
 			// Update to full configuration
@@ -58,10 +58,19 @@ func TestAccPrivilegeWildcardResource(t *testing.T) {
 					resource.TestCheckResourceAttr(resourceNamePrivilegeWildcard, "description", "updated description"),
 					resource.TestCheckResourceAttr(resourceNamePrivilegeWildcard, "read_only", "false"),
 					resource.TestCheckResourceAttr(resourceNamePrivilegeWildcard, "type", privilege_type.TypeWildcard.String()),
-					resource.TestCheckResourceAttr(resourceNamePrivilegeWildcard, "pattern", "updated-pattern-*"),
+					resource.TestCheckResourceAttr(resourceNamePrivilegeWildcard, "pattern", "nexus:updated-pattern-*"),
 				),
 			},
 			// Delete testing automatically occurs in TestCase
+			// ImportState testing
+			{
+				ResourceName:                         resourceNamePrivilegeWildcard,
+				ImportStateId:                        fmt.Sprintf("test-priv-wildcard-%s", randomString),
+				ImportState:                          true,
+				ImportStateVerify:                    true,
+				ImportStateVerifyIdentifierAttribute: "name",
+				ImportStateVerifyIgnore:              []string{"last_updated"},
+			},
 		},
 	})
 }
@@ -71,7 +80,7 @@ func buildPrivilegeWildcardResourceMinimal(randomString string) string {
 resource "%s" "p" {
 	name = "test-priv-wildcard-%s"
 	description = "some description"
-	pattern = "test-pattern"
+	pattern = "nexus:test-pattern"
 }`, resourceTypePrivilegeWildcard, randomString)
 }
 
@@ -80,6 +89,6 @@ func buildPrivilegeWildcardResourceComplete(randomString string) string {
 resource "%s" "p" {
 	name = "test-priv-wildcard-%s"
 	description = "updated description"
-	pattern = "updated-pattern-*"
+	pattern = "nexus:updated-pattern-*"
 }`, resourceTypePrivilegeWildcard, randomString)
 }

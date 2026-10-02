@@ -52,21 +52,21 @@ func NewCustomS3RegionsCapability() *CustomS3RegionsCapability {
 // --------------------------------------------
 // Capabiltiy Type: Custom S3 Regions Functions
 // --------------------------------------------
-func (f *CustomS3RegionsCapability) DoCreateRequest(plan any, apiClient *v3.APIClient, ctx context.Context, version common.SystemVersion) (*v3.CapabilityDTO, *http.Response, error) {
+func (f *CustomS3RegionsCapability) DoCreateRequest(plan any, svc common.CapabilityService, ctx context.Context, version common.SystemVersion) (*v3.CapabilityDTO, *http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.CapabilityCustomS3RegionsModel)
 
 	// Call API to Create
-	return apiClient.CapabilitiesAPI.Create3(ctx).Body(*planModel.ToApiCreateModel(version)).Execute()
+	return svc.Create(ctx, *planModel.ToApiCreateModel(version))
 }
 
-func (f *CustomS3RegionsCapability) DoUpdateRequest(plan any, capabilityId string, apiClient *v3.APIClient, ctx context.Context, version common.SystemVersion) (*http.Response, error) {
+func (f *CustomS3RegionsCapability) DoUpdateRequest(plan any, capabilityId string, svc common.CapabilityService, ctx context.Context, version common.SystemVersion) (*http.Response, error) {
 	// Cast to correct Plan Model Type
 	planModel := (plan).(model.CapabilityCustomS3RegionsModel)
 	planModel.Id = types.StringValue(capabilityId)
 
 	// Call API to Update
-	return apiClient.CapabilitiesAPI.Update3(ctx, capabilityId).Body(*planModel.ToApiUpdateModel(version)).Execute()
+	return svc.Update(ctx, capabilityId, *planModel.ToApiUpdateModel(version))
 }
 
 func (f *CustomS3RegionsCapability) PlanAsModel(ctx context.Context, plan tfsdk.Plan) (any, diag.Diagnostics) {
@@ -96,7 +96,10 @@ func (f *CustomS3RegionsCapability) UpdatePlanForState(plan any) any {
 
 func (f *CustomS3RegionsCapability) UpdateStateFromApi(state any, api any) any {
 	stateModel := (state).(model.CapabilityCustomS3RegionsModel)
-	apiModel := (api).(*v3.CapabilityDTO)
+	apiModel, ok := (api).(*v3.CapabilityDTO)
+	if !ok || apiModel == nil {
+		return state
+	}
 	stateModel.FromApiModel(apiModel)
 	stateModel.LastUpdated = types.StringValue(time.Now().Format(time.RFC850))
 	return stateModel

@@ -31,7 +31,6 @@ import (
 	tfschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types/basetypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
-	sonatyperepo "github.com/sonatype-nexus-community/nexus-repo-api-client-go/v3"
 
 	"github.com/sonatype-nexus-community/terraform-provider-shared/errors"
 	"github.com/sonatype-nexus-community/terraform-provider-shared/schema"
@@ -80,11 +79,7 @@ func (r *privilegeResource) Create(ctx context.Context, req resource.CreateReque
 	}
 
 	// Request Context
-	ctx = context.WithValue(
-		ctx,
-		sonatyperepo.ContextBasicAuth,
-		r.Auth,
-	)
+	ctx = r.AuthContext(ctx)
 
 	// Make API requet
 	httpResponse, err := r.PrivilegeType.DoCreateRequest(plan, r.Client, ctx)
@@ -128,11 +123,7 @@ func (r *privilegeResource) Read(ctx context.Context, req resource.ReadRequest, 
 	}
 
 	// Set API Context
-	ctx = context.WithValue(
-		ctx,
-		sonatyperepo.ContextBasicAuth,
-		r.Auth,
-	)
+	ctx = r.AuthContext(ctx)
 
 	// Make API Request
 	apiResponse, httpResponse, err := r.PrivilegeType.DoReadRequest(stateModel, r.Client, ctx)
@@ -177,11 +168,7 @@ func (r *privilegeResource) Update(ctx context.Context, req resource.UpdateReque
 	resp.Diagnostics.Append(diags...)
 
 	// Request Context
-	ctx = context.WithValue(
-		ctx,
-		sonatyperepo.ContextBasicAuth,
-		r.Auth,
-	)
+	ctx = r.AuthContext(ctx)
 
 	// Make API requet
 	httpResponse, err := r.PrivilegeType.DoUpdateRequest(planModel, stateModel, r.Client, ctx)
@@ -227,11 +214,7 @@ func (r *privilegeResource) Delete(ctx context.Context, req resource.DeleteReque
 	}
 
 	// Request Context
-	ctx = context.WithValue(
-		ctx,
-		sonatyperepo.ContextBasicAuth,
-		r.Auth,
-	)
+	ctx = r.AuthContext(ctx)
 
 	// Make API request
 	privilegeNameStructField := reflect.Indirect(reflect.ValueOf(state)).FieldByName("Name").Interface()
@@ -272,6 +255,49 @@ func (r *privilegeResource) Delete(ctx context.Context, req resource.DeleteReque
 			&resp.Diagnostics,
 		)
 	}
+}
+
+// ImportState imports the resource by name.
+func (r *privilegeResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	// The import ID is the Privilege name
+	privilegeName := req.ID
+
+	if privilegeName == "" {
+		resp.Diagnostics.AddError("Invalid Import ID", "Import ID cannot be empty.")
+		return
+	}
+
+	// Call format-specific import request to fetch repository data from API
+	apiResponse, httpResponse, err := r.PrivilegeType.DoImportRequest(privilegeName, r.Client, r.AuthContext(ctx))
+
+	// Handle errors
+	if err != nil {
+		if httpResponse != nil && httpResponse.StatusCode == http.StatusNotFound {
+			resp.Diagnostics.AddError(
+				fmt.Sprintf("Privilege '%s' not found", privilegeName),
+				fmt.Sprintf("The %s privilege '%s' does not exist or you do not have permission to access it.",
+					r.PrivilegeTypeType.String(), privilegeName),
+			)
+		} else {
+			errors.HandleAPIError(
+				fmt.Sprintf("Error importing %s %s privilege", privilegeName, r.PrivilegeTypeType.String()),
+				&err,
+				httpResponse,
+				&resp.Diagnostics,
+			)
+		}
+		return
+	}
+
+	// UpdateStateFromApi expects an empty instance of the proper model type and returns a populated one
+	// Pass nil as the first parameter - UpdateStateFromApi will create the proper model type
+	stateModel := r.PrivilegeType.UpdateStateFromApi(nil, apiResponse)
+
+	// Update plan for state (sets last_updated timestamp)
+	stateModel = r.PrivilegeType.UpdatePlanForState(stateModel)
+
+	// Set the state
+	resp.Diagnostics.Append(resp.State.Set(ctx, stateModel)...)
 }
 
 func basePrivilegeSchema(privilegeTypeType privilege_type.PrivilegeTypeType) tfschema.Schema {
